@@ -1,0 +1,10 @@
+bin/
+dist/
+*.exe
+*.exe~
+*.test
+*.out
+*.prof
+coverage.txt
+vendor/
+

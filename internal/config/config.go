@@ -1,0 +1,226 @@
+package config
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+const (
+	DefaultListen   = "127.0.0.1:8787"
+	DefaultUpstream = "https://opencode.ai/zen/go"
+)
+
+type Config struct {
+	Listen        string             `json:"listen"`
+	Upstream      string             `json:"upstream"`
+	ActiveProfile string             `json:"active_profile"`
+	Profiles      map[string]Profile `json:"profiles"`
+}
+
+type Profile struct {
+	APIKeyEnv     string            `json:"api_key_env"`
+	APIKey        string            `json:"api_key,omitempty"`
+	DefaultModel  string            `json:"default_model,omitempty"`
+	ModelAliases  map[string]string `json:"model_aliases,omitempty"`
+	MessageModels []string          `json:"message_models,omitempty"`
+	Headers       map[string]string `json:"headers,omitempty"`
+}
+
+func DefaultPath() (string, error) {
+	if p := strings.TrimSpace(os.Getenv("OCGT_CONFIG")); p != "" {
+		return p, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".ocgt", "config.json"), nil
+}
+
+func Example() Config {
+	return Config{
+		Listen:        DefaultListen,
+		Upstream:      DefaultUpstream,
+		ActiveProfile: "opencode-go",
+		Profiles: map[string]Profile{
+			"opencode-go": {
+				APIKeyEnv:    "OPENCODE_GO_API_KEY",
+				DefaultModel: "kimi-k2.6",
+				ModelAliases: map[string]string{
+					"deepseek": "deepseek-v4-pro",
+					"flash":    "deepseek-v4-flash",
+					"glm":      "glm-5.1",
+					"glm5":     "glm-5",
+					"hy3":      "hy3-preview",
+					"kimi":     "kimi-k2.6",
+					"kimi25":   "kimi-k2.5",
+					"mimo":     "mimo-v2.5-pro",
+					"mimo25":   "mimo-v2.5",
+					"minimax":  "minimax-m2.7",
+					"opus":     "kimi-k2.6",
+					"qwen":     "qwen3.6-plus",
+					"qwen35":   "qwen3.5-plus",
+					"sonnet":   "qwen3.6-plus",
+					"haiku":    "deepseek-v4-flash",
+				},
+				MessageModels: []string{"minimax-m2.5", "minimax-m2.7"},
+			},
+		},
+	}
+}
+
+func Load(path string) (Config, error) {
+	if strings.TrimSpace(path) == "" {
+		var err error
+		path, err = DefaultPath()
+		if err != nil {
+			return Config{}, err
+		}
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, err
+	}
+
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return Config{}, err
+	}
+	cfg.applyDefaults()
+	return cfg, cfg.Validate()
+}
+
+func WriteExample(path string, overwrite bool) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		var err error
+		path, err = DefaultPath()
+		if err != nil {
+			return "", err
+		}
+	}
+	if !overwrite {
+		if _, err := os.Stat(path); err == nil {
+			return path, fmt.Errorf("config already exists: %s", path)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return path, err
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return path, err
+	}
+	data, err := json.MarshalIndent(Example(), "", "  ")
+	if err != nil {
+		return path, err
+	}
+	return path, os.WriteFile(path, append(data, '\n'), 0o600)
+}
+
+func (c *Config) applyDefaults() {
+	if c.Listen == "" {
+		c.Listen = DefaultListen
+	}
+	if c.Upstream == "" {
+		c.Upstream = DefaultUpstream
+	}
+	if c.Profiles == nil {
+		c.Profiles = map[string]Profile{}
+	}
+	if c.ActiveProfile == "" && len(c.Profiles) == 1 {
+		for name := range c.Profiles {
+			c.ActiveProfile = name
+		}
+	}
+}
+
+func (c Config) Validate() error {
+	if _, err := url.ParseRequestURI(c.Upstream); err != nil {
+		return fmt.Errorf("invalid upstream %q: %w", c.Upstream, err)
+	}
+	if len(c.Profiles) == 0 {
+		return errors.New("at least one profile is required")
+	}
+	if _, ok := c.Profiles[c.ActiveProfile]; !ok {
+		return fmt.Errorf("active profile %q does not exist", c.ActiveProfile)
+	}
+	return nil
+}
+
+// WarnIfNoAPIKey checks if the active profile has an API key and returns a warning message if not.
+func (c Config) WarnIfNoAPIKey() string {
+	profile, name, err := c.Profile("")
+	if err != nil {
+		return ""
+	}
+	if profile.APIKeyValue() == "" {
+		return fmt.Sprintf("profile %q has no API key (set %s or configure api_key)", name, profile.APIKeyEnv)
+	}
+	return ""
+}
+
+func (c Config) Profile(name string) (Profile, string, error) {
+	if strings.TrimSpace(name) == "" {
+		name = c.ActiveProfile
+	}
+	p, ok := c.Profiles[name]
+	if !ok {
+		return Profile{}, name, fmt.Errorf("profile %q does not exist", name)
+	}
+	return p, name, nil
+}
+
+func (p Profile) APIKeyValue() string {
+	if p.APIKey != "" {
+		return p.APIKey
+	}
+	if p.APIKeyEnv != "" {
+		return os.Getenv(p.APIKeyEnv)
+	}
+	return ""
+}
+
+func (p Profile) ResolveModel(model string) string {
+	if model == "" {
+		model = p.DefaultModel
+	}
+	model = strings.TrimSpace(model)
+	if p.ModelAliases != nil {
+		if mapped := p.ModelAliases[model]; mapped != "" {
+			return mapped
+		}
+	}
+	lower := strings.ToLower(model)
+	switch {
+	case strings.HasPrefix(lower, "claude-opus"):
+		return p.resolveAliasOrDefault("opus")
+	case strings.HasPrefix(lower, "claude-sonnet"):
+		return p.resolveAliasOrDefault("sonnet")
+	case strings.HasPrefix(lower, "claude-haiku"):
+		return p.resolveAliasOrDefault("haiku")
+	}
+	return model
+}
+
+func (p Profile) resolveAliasOrDefault(alias string) string {
+	if p.ModelAliases != nil {
+		if mapped := p.ModelAliases[alias]; mapped != "" {
+			return mapped
+		}
+	}
+	return p.DefaultModel
+}
+
+func (p Profile) UsesMessagesEndpoint(model string) bool {
+	model = p.ResolveModel(model)
+	for _, candidate := range p.MessageModels {
+		if strings.EqualFold(candidate, model) {
+			return true
+		}
+	}
+	return false
+}
