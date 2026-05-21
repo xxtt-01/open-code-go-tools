@@ -316,6 +316,11 @@ func syncClaudeSettings(env map[string]string, defaultModel string) error {
 		envMap = map[string]any{}
 	}
 	delete(envMap, "ANTHROPIC_AUTH_TOKEN")
+	// Clean up legacy custom model name keys to prevent stale astron-code-latest models from displaying
+	delete(envMap, "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME")
+	delete(envMap, "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME")
+	delete(envMap, "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME")
+
 	for key, value := range env {
 		envMap[key] = value
 	}

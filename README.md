@@ -1,154 +1,112 @@
-# ocgt - Claude API 兼容性代理控制面板
+# ocgt - Claude API 兼容性代理与本地可视化控制面板
 
-`ocgt` 是一个轻量级的 Claude API 兼容性代理工具，内置 **Web可视化控制面板**，用于连接 Claude Code 和 OpenCode Go API。
+`ocgt` (OpenCode Go Tools) 是一个专为 **Claude Code** 打造的本地 API 兼容性代理工具。它内置了基于 Wails 的原生桌面 GUI 客户端和实时 Web 控制面板，旨在为国内开发者提供“一键式”对接国产大模型（如 Kimi、GLM、DeepSeek、Qwen、面壁 MiMo、MiniMax 等）的无缝体验。
 
-## 核心特性
+为了让用户能够**零门槛、免配置开发环境直接运行**，我们提供了**一键双击即用的预编译版本**。用户无需安装 Go、Wails 或任何编译环境，即可完美运行可视化代理客户端并自动完成环境净化。
 
-- **Web可视化控制面板** - 内置现代化暗色主题UI，无需额外安装
-- **实时流量监控** - 可视化查看所有代理请求的历史记录
-- **一键配置管理** - 在网页中切换Profile、更新API Key
-- **环境配置助手** - 自动生成并复制Claude Code环境变量命令
-- **CC Switch集成** - 一键生成CC Switch提供商配置JSON
-- **多模型支持** - 支持Kimi、GLM、DeepSeek、Qwen、MiMo、MiniMax等国产大模型
-- **协议转换** - 自动将Anthropic Messages协议转换为OpenAI Chat Completions协议
+---
 
-## 架构概览
+## 🖥️ 实际运行界面预览
 
+以下为 `ocgt` 桌面客户端在实际环境中的运行截图：
+
+### 1. 系统状态监控 (Status Monitor)
+![ocgt 系统状态监控](assets/gui_status.png)
+*图 1：双击运行即可展现直观的图形化面板，清晰查看当前监听端口、上游 API 节点、API Key 持久化状态及本地 `config.json` 配置路径。*
+
+### 2. 一键配置管理中心 (Configuration)
+![ocgt 配置管理](assets/gui_config.png)
+*图 2：在界面中可以直接切换不同的配置 Profile，更新保存您的 OpenCode Go 密钥，并提供直观的可视化 Claude 模型映射（Sonnet/Haiku/Opus）设置，保存后自动完成 Go 后端热重载并同步修复系统残留。*
+
+### 3. 一键控制台激活与唤醒 (Terminal Launcher)
+![ocgt 终端启动](assets/gui_terminal.png)
+*图 3：支持直接在界面上一键拉起预设好全部代理和独立环境变量的 CMD、PowerShell 窗口，只需在弹出窗口中直接运行 `claude` 即可进入工作，完全不污染全局环境变量。*
+
+---
+
+## 🗺️ 系统架构与数据流向
+
+`ocgt` 桌面客户端、代理服务端与 Claude Code CLI 之间的协作交互流向如下：
+
+```mermaid
+graph TD
+    %% 样式定义
+    classDef wails fill:#2d3748,stroke:#4a5568,stroke-width:2px,color:#fff;
+    classDef go fill:#0052cc,stroke:#0747a6,stroke-width:2px,color:#fff;
+    classDef config fill:#2d3748,stroke:#4a5568,stroke-width:2px,color:#fff;
+    classDef client fill:#d97706,stroke:#b45309,stroke-width:2px,color:#fff;
+
+    subgraph "ocgt 客户端 (GUI / 后端)"
+        GUI["桌面 GUI 窗口 (Wails)"]:::wails
+        AppGo["Go App 核心控制层 (app.go)"]:::go
+    end
+
+    subgraph "本地代理与配置"
+        Config["本地代理配置 (~/.ocgt/config.json)"]:::config
+        ProxyServer["本地代理服务 (127.0.0.1:8787)"]:::go
+    end
+
+    subgraph "Claude Code 工作区"
+        ClaudeSettings["Claude 配置文件 (~/.claude/settings.json)"]:::config
+        ClaudeClient["Claude Code 命令行工具"]:::client
+    end
+
+    %% 业务关联
+    GUI <-->|"数据绑定"| AppGo
+    AppGo -->|"写入密钥与配置"| Config
+    AppGo -->|"控制开关"| ProxyServer
+    AppGo -->|"一键注入与净化 (Go 安全重修)"| ClaudeSettings
+    AppGo -->|"直接唤醒预设窗口"| ClaudeClient
+
+    ClaudeClient -->|"发送 API 请求"| ProxyServer
+    ProxyServer -->|"流式/工具调用协议智能适配"| Upstream["OpenCode Go 上游 API"]:::client
 ```
-Claude Code -> ocgt 本地代理 -> OpenCode Go 官方 API
-                    ↓
-          Web控制面板 (http://127.0.0.1:8787)
-```
 
-## 快速开始
+---
 
-### 1. 编译
+## 🌟 核心特性
+
+*   **⚡ 免安装环境预编译版**：直接双击运行，无需在系统里繁琐地安装 Go 编译器和 Wails CLI，真正的双击即用。
+*   **🧹 一键环境注入与配置净化**：在 GUI 中点击 `一键修复 Claude Code 系统环境变量`，Go 后端在向系统注入代理环境变量的同时，会**自动解析并清洗 `~/.claude/settings.json`**，安全抹除历史残留的污染别名（如先前使用 `ccswith` 等配置遗留的 `astron-code-latest` 选项），保证模型菜单列表绝对干净。
+*   **💻 一键拉起安全终端**：GUI 支持直接拉起已预设好代理和完全隔离的临时环境变量的 CMD/PowerShell 窗口，输入 `claude` 即可即开即用，完全不污染您的全局系统环境变量。
+*   **🔄 双向协议适配**：代理层支持双向协议重构，将 Anthropic Messages 协议（流式响应、工具调用 Tool Calling、Token 计数）无缝转译为标准的 OpenAI 协议，并在内存中智能管理缓存，完美支持 DeepSeek 等模型的 Reasoning（思考过程）透传。
+
+---
+
+## 🚀 快速使用指南
+
+### 推荐：直接运行预编译的 Release GUI 客户端（零门槛）
+
+1.  **下载双击运行**：
+    前往项目的 [Releases](../../releases) 页面，下载最新的 `ocgt.exe`。双击即可直接运行，程序启动后会在后台激活 `127.0.0.1:8787` 本地代理服务。
+2.  **保存 API Key**：
+    在 GUI 的“一键配置管理中心”区域，选定您的活跃 Profile（默认为 `opencode-go`），填入您的 OpenCode Go 密钥并点击 **保存并热重载配置**。
+3.  **注入并净化环境**：
+    点击 GUI 下方的 **一键修复 Claude Code 系统环境变量**，程序将完成系统变量写入，并自动清理 `.claude/settings.json` 中的过期残留别名。
+4.  **拉起终端开始编码**：
+    在 GUI 中点击“一键控制台激活”界面的 **一键拉起配置终端**。在弹出的 PowerShell/CMD 终端中直接输入 `claude` 即可进入工作。
+
+---
+
+### 开发：通过源码自行构建 GUI / CLI
+
+如果您是开发者并希望自行构建项目，可参考以下命令：
+
+*   **前置要求**：安装 Go 1.22+ 以及 Wails CLI。
 
 ```powershell
-git clone https://github.com/ethan-blue/open-code-go-tools.git
-cd open-code-go-tools
+# 1. 编译原生 GUI 版本 (输出在 build\bin\ocgt.exe)
+wails build
+
+# 2. 编译极简 CLI 版本 (输出在 bin\ocgt.exe)
 go build -o .\bin\ocgt.exe .\cmd\ocgt
 ```
 
-### 2. 初始化配置
+---
 
-```powershell
-.\bin\ocgt.exe init
-```
+## 📋 配置文件格式说明 (`config.json`)
 
-默认配置文件路径：`%USERPROFILE%\.ocgt\config.json`
-
-### 3. 设置 API 密钥
-
-```powershell
-# 方式一：通过命令行
-.\bin\ocgt.exe key set "your-opencode-go-key"
-
-# 方式二：通过Web控制面板（推荐）
-# 启动代理后访问 http://127.0.0.1:8787 直接在网页中输入密钥
-```
-
-### 4. 启动代理服务
-
-```powershell
-.\bin\ocgt.exe serve
-```
-
-### 5. 打开 Web 控制面板
-
-浏览器访问：`http://127.0.0.1:8787`
-
-在Web面板中你可以：
-- 查看系统运行状态
-- 切换活跃Profile
-- 更新API Key
-- 查看实时请求历史
-- 复制Claude Code环境配置命令
-- 生成CC Switch配置JSON
-
-### 6. 配置 Claude Code
-
-在Web面板的"环境配置助手"卡片中，选择你的终端类型（PowerShell/Bash/CMD），点击"复制命令"，然后在开发终端中执行。
-
-或者在另一个终端中运行：
-
-```powershell
-.\bin\ocgt.exe claude-env
-```
-
-执行输出的命令后启动 Claude Code：
-
-```powershell
-claude
-```
-
-## Web 控制面板功能
-
-### 系统状态总览
-- 监听地址
-- 上游API地址
-- 活跃Profile
-- 默认大模型
-- 请求超时设置
-- 配置文件路径
-
-### 配置与密钥管理
-- Profile下拉切换
-- API Key输入与保存（直接写入config.json）
-- 密钥明密文切换显示
-
-### Claude Code 环境配置
-- 支持PowerShell/Bash/CMD三种终端
-- 一键复制环境变量命令
-- 自动根据当前配置生成
-
-### CC Switch 提供商配置
-- 一键生成Provider JSON配置
-- 自动填充当前Profile信息
-- 一键复制到剪贴板
-
-### 实时流量监控
-- 实时显示代理请求历史
-- 包含：时间、方法、路径、目标模型、HTTP状态、响应时间
-- 每2.5秒自动刷新
-
-## API 端点
-
-### 代理端点
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/v1/models` | GET | 获取模型列表 |
-| `/v1/messages` | POST | 发送消息（Anthropic协议） |
-| `/v1/messages/count_tokens` | POST | 计算token数 |
-| `/healthz` | GET | 健康检查 |
-| `/ocgt/profile` | GET | 获取当前Profile |
-
-### Web面板API
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/ocgt/api/status` | GET | 获取系统状态 |
-| `/ocgt/api/profiles` | GET | 获取所有Profile列表 |
-| `/ocgt/api/profiles/active` | POST | 切换活跃Profile |
-| `/ocgt/api/key` | POST | 更新API Key |
-| `/ocgt/api/history` | GET | 获取请求历史 |
-
-## 命令行工具
-
-| 命令 | 说明 |
-|------|------|
-| `ocgt init` | 创建配置文件 |
-| `ocgt serve` | 启动本地代理服务 |
-| `ocgt profiles` | 列出已配置的profiles |
-| `ocgt models` | 显示本地模型别名或使用 `--remote` 查询官方模型列表 |
-| `ocgt claude-env` | 打印 Claude Code 环境变量配置 |
-| `ocgt ccswitch` | 打印 CC Switch 提供商配置片段 |
-| `ocgt key set <key>` | 保存 API Key 到用户环境变量 |
-| `ocgt key show` | 显示当前设置的 API Key |
-| `ocgt version` | 显示版本号 |
-
-## 配置说明
-
-### 默认配置
+默认配置文件存放在 `%USERPROFILE%\.ocgt\config.json`：
 
 ```json
 {
@@ -164,154 +122,33 @@ claude
         "deepseek": "deepseek-v4-pro",
         "flash": "deepseek-v4-flash",
         "glm": "glm-5.1",
-        "glm5": "glm-5",
         "haiku": "deepseek-v4-flash",
-        "hy3": "hy3-preview",
         "kimi": "kimi-k2.6",
-        "kimi25": "kimi-k2.5",
-        "mimo": "mimo-v2.5-pro",
-        "mimo25": "mimo-v2.5",
-        "minimax": "minimax-m2.7",
         "opus": "kimi-k2.6",
-        "qwen35": "qwen3.5-plus",
         "qwen": "qwen3.6-plus",
         "sonnet": "qwen3.6-plus"
-      },
-      "message_models": [
-        "minimax-m2.5",
-        "minimax-m2.7"
-      ]
+      }
     }
   }
 }
 ```
 
-### 配置项说明
+---
 
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `listen` | 本地代理监听地址 | `127.0.0.1:8787` |
-| `upstream` | OpenCode Go API 上游地址 | `https://opencode.ai/zen/go` |
-| `request_timeout_seconds` | 请求超时时间（秒） | `300` |
-| `active_profile` | 默认使用的配置 profile | `opencode-go` |
-| `api_key_env` | API Key 环境变量名称 | `OPENCODE_GO_API_KEY` |
-| `default_model` | 默认模型 | `kimi-k2.6` |
-| `model_aliases` | 模型别名映射 | 见上表 |
-| `message_models` | 使用 Messages 端点的模型 | `minimax-m2.5`, `minimax-m2.7` |
+## 🤖 模型映射关系
 
-## 支持的模型
+当 Claude Code 发出模型请求时，`ocgt` 会依据您当前活跃 Profile 的别名表自动路由至对应的上游 API 模型：
 
-### OpenCode Go 官方模型
+| 客户端选择 (Alias) | 上游实际模型 (Upstream Model) | 对标 Claude 角色 | 说明 |
+| :--- | :--- | :--- | :--- |
+| **`kimi` / `opus`** | `kimi-k2.6` | **Claude 3 Opus** | 默认首选。极强推理能力，适合解决复杂重构和 Debug 任务 |
+| **`sonnet` / `qwen`** | `qwen3.6-plus` | **Claude 3.5 Sonnet** | 通义千问顶尖旗舰。响应敏捷，代码质量极高 |
+| **`glm`** | `glm-5.1` | **Claude 3.5 Sonnet** | 智谱清言最新升级版。工具链调用与上下文关联能力强悍 |
+| **`deepseek`** | `deepseek-v4-pro` | **Claude 3.5 Sonnet** | 深度求索专业版。优秀的推理逻辑与搜索整合 |
+| **`haiku` / `flash`** | `deepseek-v4-flash` | **Claude 3 Haiku** | 低成本与高吞吐首选。适合轻量级分析与大面积代码扫描 |
 
-- `glm-5`, `glm-5.1`
-- `kimi-k2.5`, `kimi-k2.6`
-- `mimo-v2.5`, `mimo-v2.5-pro`
-- `minimax-m2.5`, `minimax-m2.7`
-- `qwen3.5-plus`, `qwen3.6-plus`
-- `deepseek-v4-pro`, `deepseek-v4-flash`
-- `hy3-preview`
+---
 
-### 模型别名
+## 📄 开源协议
 
-| 别名 | 映射模型 | 说明 |
-|------|----------|------|
-| `kimi` | `kimi-k2.6` | 默认模型 |
-| `kimi25` | `kimi-k2.5` | Kimi上一代 |
-| `glm` | `glm-5.1` | 智谱最新 |
-| `glm5` | `glm-5` | 智谱5代 |
-| `qwen` | `qwen3.6-plus` | 通义最新 |
-| `qwen35` | `qwen3.5-plus` | 通义3.5 |
-| `deepseek` | `deepseek-v4-pro` | 深度求索Pro |
-| `flash` | `deepseek-v4-flash` | 深度求索Flash |
-| `mimo` | `mimo-v2.5-pro` | 面壁Pro |
-| `mimo25` | `mimo-v2.5` | 面壁标准 |
-| `minimax` | `minimax-m2.7` | MiniMax最新 |
-| `opus` | `kimi-k2.6` | 对标Claude Opus |
-| `sonnet` | `qwen3.6-plus` | 对标Claude Sonnet |
-| `haiku` | `deepseek-v4-flash` | 对标Claude Haiku |
-| `hy3` | `hy3-preview` | Hy3预览版 |
-
-## CC Switch 配置
-
-在Web面板中点击"CC Switch 提供商配置"卡片，复制生成的JSON，然后导入CC Switch客户端。
-
-或使用命令行生成：
-
-```powershell
-.\bin\ocgt.exe ccswitch --profile opencode-go
-```
-
-### 推荐的 CC Switch 映射
-
-| 角色 | 菜单名称 | 实际模型 |
-|------|----------|----------|
-| Opus | Kimi K2.6 | `kimi-k2.6` |
-| Sonnet | GLM-5.1 | `glm-5.1` |
-| Sonnet | Qwen3.6 Plus | `qwen3.6-plus` |
-| Sonnet | DeepSeek V4 Pro | `deepseek-v4-pro` |
-| Haiku | DeepSeek V4 Flash | `deepseek-v4-flash` |
-| Sonnet | MiniMax M2.7 | `minimax-m2.7` |
-| Haiku | MiniMax M2.5 | `minimax-m2.5` |
-
-## 技术细节
-
-### 协议转换流程
-
-1. **Claude Code 请求** -> Anthropic Messages 格式
-2. **ocgt 代理** -> 根据模型类型决定路由：
-   - Messages 模型 (MiniMax) -> 直接转发到 `/v1/messages`
-   - Chat Completions 模型 (Kimi/GLM/DeepSeek/Qwen) -> 转换为 OpenAI 格式并转发到 `/v1/chat/completions`
-3. **OpenCode Go API** -> 返回响应
-4. **ocgt 代理** -> 将响应转换回 Anthropic Messages 格式
-5. **Claude Code** <- 接收标准 Anthropic 响应
-
-### 支持的特性
-
-- 流式响应 (Streaming)
-- 工具调用 (Tool Calling)
-- DeepSeek 思考模式兼容
-- 多模型支持
-- 模型别名映射
-- 自定义 Headers
-- 多Profile支持
-- Web可视化管理
-
-## 项目结构
-
-```
-open-code-go-tools/
-├── cmd/ocgt/main.go           # CLI 主程序入口
-├── internal/
-│   ├── config/
-│   │   ├── config.go          # 配置管理
-│   │   └── config_test.go     # 配置测试
-│   └── proxy/
-│       ├── types.go           # 类型定义和 Server 构造
-│       ├── converter.go       # Anthropic/OpenAI 协议转换
-│       ├── streamer.go        # SSE 流式响应处理
-│       ├── handler.go         # HTTP 路由和处理逻辑
-│       ├── helpers.go         # 工具函数
-│       ├── web_handler.go     # Web静态文件服务
-│       ├── proxy_test.go      # 代理测试
-│       └── web/               # Web控制面板前端
-│           ├── index.html     # 主页面
-│           ├── app.js         # 前端逻辑
-│           └── style.css      # 样式表
-├── app.go                     # GUI 应用集成
-├── env_windows.go             # Windows 环境变量设置
-├── env_other.go               # 非Windows平台存根
-├── go.mod                     # Go 模块定义
-├── Makefile                   # 构建脚本
-├── LICENSE                    # MIT 许可证
-└── README.md                  # 项目说明
-```
-
-## 参考文档
-
-- [OpenCode Go 文档](https://dev.opencode.ai/docs/go/)
-- [Claude Code 环境变量](https://code.claude.com/docs/en/env-vars)
-- [CC Switch](https://cc-switch.cc/en)
-
-## 许可证
-
-MIT License
+本项目采用 **MIT License** 开源协议。欢迎大家提交 Issue 与 PR 共同完善本地代理体验！
