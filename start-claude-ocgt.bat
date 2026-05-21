@@ -33,6 +33,8 @@ set "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1"
 set "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1"
 set "ANTHROPIC_MODEL=deepseek-v4-pro"
 
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$p=Join-Path $env:USERPROFILE '.claude\settings.json'; if (Test-Path $p) { $j=Get-Content -Raw -LiteralPath $p | ConvertFrom-Json; if (-not $j.env) { $j | Add-Member -MemberType NoteProperty -Name env -Value ([pscustomobject]@{}) }; if ($j.env.PSObject.Properties['ANTHROPIC_AUTH_TOKEN']) { $j.env.PSObject.Properties.Remove('ANTHROPIC_AUTH_TOKEN') }; $pairs=@{ANTHROPIC_BASE_URL='%OCGT_BASE_URL%';ANTHROPIC_API_KEY='ocgt-local-proxy';ANTHROPIC_CUSTOM_HEADERS='X-Ocgt-Profile: opencode-go';ANTHROPIC_MODEL='deepseek-v4-pro'}; foreach($k in $pairs.Keys){ if($j.env.PSObject.Properties[$k]){$j.env.$k=$pairs[$k]}else{$j.env|Add-Member -MemberType NoteProperty -Name $k -Value $pairs[$k]} }; $j | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $p -Encoding UTF8 }"
+
 echo Proxy: %ANTHROPIC_BASE_URL%
 echo Model: %ANTHROPIC_MODEL%
 echo.

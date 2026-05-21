@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -179,6 +180,9 @@ func (a *App) InstallClaudeUserEnv() string {
 			return "set " + name + " error: " + err.Error()
 		}
 	}
+	if err := syncClaudeSettings(env, defaultModel); err != nil {
+		return "sync Claude settings error: " + err.Error()
+	}
 	return "success"
 }
 
@@ -209,7 +213,7 @@ func (a *App) LaunchClaudeTerminal(shell string) string {
 		if shell == "cmd" {
 			// Launch CMD terminal
 			cmd := exec.Command("cmd.exe", "/c", "start", "cmd.exe", "/k",
-				fmt.Sprintf("set ANTHROPIC_BASE_URL=%s&& set ANTHROPIC_API_KEY=ocgt-local-proxy&& set ANTHROPIC_CUSTOM_HEADERS=X-Ocgt-Profile:%s&& set CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1&& set CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1&& set ANTHROPIC_MODEL=%s&& echo =========================================================&& echo  [ocgt] Claude Code 代理终端已成功拉起！&& echo  当前代理: %s&& echo  当前模型: %s&& echo  请在下方直接输入: claude&& echo =========================================================&& echo.",
+				fmt.Sprintf("set ANTHROPIC_AUTH_TOKEN=&& set ANTHROPIC_BASE_URL=%s&& set ANTHROPIC_API_KEY=ocgt-local-proxy&& set ANTHROPIC_CUSTOM_HEADERS=X-Ocgt-Profile:%s&& set CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1&& set CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1&& set ANTHROPIC_MODEL=%s&& echo =========================================================&& echo  [ocgt] Claude Code 代理终端已成功拉起！&& echo  当前代理: %s&& echo  当前模型: %s&& echo  请在下方直接输入: claude&& echo =========================================================&& echo.",
 					baseURL, activeProfile, defaultModel, baseURL, defaultModel))
 			if err := cmd.Run(); err != nil {
 				return "launch cmd error: " + err.Error()
@@ -217,7 +221,7 @@ func (a *App) LaunchClaudeTerminal(shell string) string {
 		} else {
 			// Launch PowerShell terminal
 			psScript := fmt.Sprintf(
-				"$env:ANTHROPIC_BASE_URL='%s'; $env:ANTHROPIC_API_KEY='ocgt-local-proxy'; $env:ANTHROPIC_CUSTOM_HEADERS='X-Ocgt-Profile: %s'; $env:CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS='1'; $env:CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY='1'; $env:ANTHROPIC_MODEL='%s'; Clear-Host; Write-Host '=========================================================' -ForegroundColor Cyan; Write-Host ' [ocgt] Claude Code 代理终端已成功拉起！' -ForegroundColor Green; Write-Host ' 当前代理: %s' -ForegroundColor Gray; Write-Host ' 当前模型: %s' -ForegroundColor Gray; Write-Host ' 请在下方直接输入: claude' -ForegroundColor Green; Write-Host '=========================================================' -ForegroundColor Cyan; Write-Host ''",
+				"Remove-Item Env:ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue; $env:ANTHROPIC_BASE_URL='%s'; $env:ANTHROPIC_API_KEY='ocgt-local-proxy'; $env:ANTHROPIC_CUSTOM_HEADERS='X-Ocgt-Profile: %s'; $env:CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS='1'; $env:CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY='1'; $env:ANTHROPIC_MODEL='%s'; Clear-Host; Write-Host '=========================================================' -ForegroundColor Cyan; Write-Host ' [ocgt] Claude Code 代理终端已成功拉起！' -ForegroundColor Green; Write-Host ' 当前代理: %s' -ForegroundColor Gray; Write-Host ' 当前模型: %s' -ForegroundColor Gray; Write-Host ' 请在下方直接输入: claude' -ForegroundColor Green; Write-Host '=========================================================' -ForegroundColor Cyan; Write-Host ''",
 				baseURL, activeProfile, defaultModel, baseURL, defaultModel)
 			cmd := exec.Command("powershell.exe", "-NoExit", "-Command", psScript)
 			if err := cmd.Start(); err != nil {
@@ -228,7 +232,7 @@ func (a *App) LaunchClaudeTerminal(shell string) string {
 	case "darwin":
 		// MacOS support (Terminal.app)
 		script := fmt.Sprintf(
-			"tell application \"Terminal\" to do script \"export ANTHROPIC_BASE_URL='%s' && export ANTHROPIC_API_KEY='ocgt-local-proxy' && export ANTHROPIC_CUSTOM_HEADERS='X-Ocgt-Profile: %s' && export CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS='1' && export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY='1' && export ANTHROPIC_MODEL='%s' && clear && echo '=========================================================' && echo ' [ocgt] Claude Code 代理终端已成功拉起！' && echo ' 当前代理: %s' && echo ' 当前模型: %s' && echo ' 请在下方直接输入: claude' && echo '=========================================================' && echo ''\"",
+			"tell application \"Terminal\" to do script \"unset ANTHROPIC_AUTH_TOKEN && export ANTHROPIC_BASE_URL='%s' && export ANTHROPIC_API_KEY='ocgt-local-proxy' && export ANTHROPIC_CUSTOM_HEADERS='X-Ocgt-Profile: %s' && export CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS='1' && export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY='1' && export ANTHROPIC_MODEL='%s' && clear && echo '=========================================================' && echo ' [ocgt] Claude Code 代理终端已成功拉起！' && echo ' 当前代理: %s' && echo ' 当前模型: %s' && echo ' 请在下方直接输入: claude' && echo '=========================================================' && echo ''\"",
 			baseURL, activeProfile, defaultModel, baseURL, defaultModel)
 		cmd := exec.Command("osascript", "-e", script)
 		if err := cmd.Run(); err != nil {
@@ -290,4 +294,42 @@ func setUserEnvironment(name, value string) error {
 	default:
 		return nil
 	}
+}
+
+func syncClaudeSettings(env map[string]string, defaultModel string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	settings := map[string]any{}
+	if data, err := os.ReadFile(settingsPath); err == nil && len(data) > 0 {
+		if err := json.Unmarshal(data, &settings); err != nil {
+			return err
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	envMap, _ := settings["env"].(map[string]any)
+	if envMap == nil {
+		envMap = map[string]any{}
+	}
+	delete(envMap, "ANTHROPIC_AUTH_TOKEN")
+	for key, value := range env {
+		envMap[key] = value
+	}
+	envMap["ANTHROPIC_DEFAULT_SONNET_MODEL"] = defaultModel
+	envMap["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = "deepseek-v4-flash"
+	envMap["ANTHROPIC_DEFAULT_OPUS_MODEL"] = "kimi-k2.6"
+	settings["env"] = envMap
+
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
+		return err
+	}
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(settingsPath, append(out, '\n'), 0o600)
 }
