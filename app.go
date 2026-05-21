@@ -171,6 +171,9 @@ func (a *App) InstallClaudeUserEnv() string {
 		"OCGT_PROFILE":                               activeProfile,
 	}
 
+	if err := unsetUserEnvironment("ANTHROPIC_AUTH_TOKEN"); err != nil {
+		return "unset ANTHROPIC_AUTH_TOKEN error: " + err.Error()
+	}
 	for name, value := range env {
 		if err := setUserEnvironment(name, value); err != nil {
 			return "set " + name + " error: " + err.Error()
@@ -234,6 +237,20 @@ func (a *App) LaunchClaudeTerminal(shell string) string {
 		return "success"
 	default:
 		return "unsupported operating system for automatic terminal launch"
+	}
+}
+
+func unsetUserEnvironment(name string) error {
+	if err := os.Unsetenv(name); err != nil {
+		return err
+	}
+	switch runtime.GOOS {
+	case "windows":
+		return unsetWindowsUserEnvironment(name)
+	case "darwin":
+		return nil
+	default:
+		return nil
 	}
 }
 
