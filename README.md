@@ -1,116 +1,130 @@
 # ocgt - Claude Code 本地代理与 GUI 控制面板
 
-`ocgt` (OpenCode Go Tools) 是面向 Claude Code 的本地 API 兼容代理。它把 Claude Code 的 Anthropic Messages 请求转换为 OpenCode Go 上游可用的接口，并提供一个 Wails 原生 GUI：保存密钥、切换模型映射、修复环境变量、拉起已配置终端、查看实时请求日志，都可以在图形界面里完成。
+`ocgt`（OpenCode Go Tools）是面向 Claude Code 的本地兼容代理。它把 Claude Code 的 Anthropic Messages 请求转换为 OpenAI Chat Completions 风格上游可接收的请求，并提供一个 Wails 原生 GUI，用于保存 OpenCode Go API Key、配置模型映射、修复 Claude Code 环境变量、拉起已配置终端、查看实时请求日志。
 
-> 当前 Release 工作流构建的是 GUI 客户端：Windows 产物为 `ocgt-windows-amd64.exe`，macOS/Linux 产物为对应平台的 `ocgt-*` 可执行文件。下载后直接运行即可使用图形界面。
+当前 GUI 版本：`v0.1.7`。
 
-## GUI 预览
+## 这版解决了什么
 
-### 系统状态
+- 修复 GUI 中 “Thinking Token 上限” 标签乱码问题，改为更不容易误配的“思考强度”下拉选项。
+- 支持 Claude Code 的 `MAX_THINKING_TOKENS` / `CLAUDE_CODE_DISABLE_THINKING` 工作流。
+- 透传并转换上游返回的 `reasoning_content`、`thinking`、`reasoning_details` 等思考字段，能显示则显示，不伪造思考过程。
+- 为思考预算设置安全上限，默认 `512`，可选关闭、快速、均衡、深度、强力。
+- 缩短 GUI 初始代理状态等待时间，避免打开后长时间空白等待。
+- 增加 Wails 单实例锁，重复双击会唤起已有窗口，而不是开多个进程等半天才显示。
+- 构建脚本在没有全局 `wails` CLI 时会自动使用 `go run github.com/wailsapp/wails/v2/cmd/wails@v2.12.0`。
+- Release workflow 从 tag 注入版本号，并上传真实构建产物。
 
-![ocgt 系统状态监控](assets/gui_status.png)
+## Claude Code 接入方式
 
-启动后会自动加载本地代理状态，显示监听地址、上游 API、当前 Profile、默认模型、API Key 是否已配置，以及本地 `config.json` 路径。
+推荐从 GUI 操作：
 
-### 配置管理
+1. 下载并运行最新 Release 中的 `ocgt-windows-amd64.exe`。
+2. 在“配置管理”里填写 OpenCode Go API Key，选择默认模型和 Sonnet/Haiku/Opus 映射。
+3. 选择“思考强度”：
+   - 快速：低延迟，适合简单问题。
+   - 均衡：默认推荐。
+   - 深度：适合复杂编码和分析。
+   - 强力：适合重构、排错、长链路任务。
+   - 关闭思考：设置 `CLAUDE_CODE_DISABLE_THINKING=1`。
+4. 点击“一键修复 Claude Code 系统环境变量”，清理旧的 CC Switch / Claude Code 残留变量。
+5. 在“终端启动”页拉起配置好的终端，进入终端后运行 `claude`。
 
-![ocgt 配置管理](assets/gui_config.png)
+GUI 会设置这些关键变量：
 
-在 GUI 中选择 Profile，填写 OpenCode Go API Key，选择默认模型与 Sonnet/Haiku/Opus 映射目标，然后点击“保存并热重载配置”。保存成功后服务会即时应用新配置。
+```text
+ANTHROPIC_BASE_URL=http://127.0.0.1:8787
+ANTHROPIC_API_KEY=ocgt-local-proxy
+ANTHROPIC_MODEL=<当前默认模型>
+ANTHROPIC_CUSTOM_HEADERS=X-Ocgt-Profile: <当前 profile>
+MAX_THINKING_TOKENS=<思考强度对应预算>
+```
 
-### 一键终端
+关闭思考时额外设置：
 
-![ocgt 终端启动](assets/gui_terminal.png)
+```text
+CLAUDE_CODE_DISABLE_THINKING=1
+```
 
-选择 PowerShell、CMD 或 Bash 后点击“一键拉起配置终端”，新终端会带上当前代理环境变量。进入终端后直接运行 `claude` 即可。
+## 为什么有时看不到思考过程
 
-## 为什么会看到旧模型
+Claude Code 是否显示思考过程，取决于三件事：
 
-如果 `/model` 里已经能看到 `kimi-k2.6`，但同时还出现旧的 `astron-code-latest`、旧 Sonnet/Opus/Haiku 名称，通常不是 ocgt 解析错了，而是 Claude Code 或 CC Switch 之前写入过这些环境变量：
+1. Claude Code 当前版本是否展示上游返回的 thinking / reasoning 内容。
+2. 上游模型是否真的返回 reasoning 字段。
+3. 代理是否能把上游字段转换为 Anthropic 流式 thinking block。
 
-- `ANTHROPIC_DEFAULT_SONNET_MODEL_NAME`
-- `ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME`
-- `ANTHROPIC_DEFAULT_OPUS_MODEL_NAME`
-- `ANTHROPIC_DEFAULT_SONNET_MODEL`
-- `ANTHROPIC_DEFAULT_HAIKU_MODEL`
-- `ANTHROPIC_DEFAULT_OPUS_MODEL`
-- `ANTHROPIC_AUTH_TOKEN`
-
-GUI 的“一键修复 Claude Code 系统环境变量”会清理这些旧变量，并只保留 ocgt 当前需要的代理变量。修复后请关闭旧 PowerShell/CMD，再打开新终端运行 `claude`，否则旧进程仍可能继承老环境。
-
-## 502 是否需要考虑
-
-需要。流量监控里的 502/504 表示 ocgt 已经收到 Claude Code 请求，但连接上游或等待上游响应失败。常见原因包括：
-
-- 上游服务短时不可用或限流。
-- API Key 错误、额度不足或上游拒绝。
-- 本机网络、代理或 DNS 问题。
-- 请求耗时超过 `request_timeout_seconds`。
-
-GUI 的“流量监控”会显示成功率、平均延时，并在失败行中展示上游返回的错误原因。502 不会被伪装成成功，这样才能看清真实稳定性。
+`ocgt` 现在做的是兼容转换：如果上游返回了真实 reasoning，就转成 Claude Code 能识别的 thinking；如果上游没有返回，`ocgt` 不会伪造思考内容。
 
 ## 快速开始
 
 1. 到 [Releases](../../releases) 下载最新 GUI 可执行文件。
-2. 双击运行 `ocgt-windows-amd64.exe`，程序会启动本地代理，默认监听 `127.0.0.1:8787`。
-3. 在“配置管理”里填写 OpenCode Go API Key，保存并热重载。
-4. 点击“一键修复 Claude Code 系统环境变量”，清理旧 CC Switch/Claude Code 残留。
-5. 到“终端启动”页点击“一键拉起配置终端”，在新终端里运行 `claude`。
-
-## 开发构建
-
-需要 Go 1.22+ 和 Wails CLI。
-
-```powershell
-# 构建 GUI 版本，输出到 build\bin\ocgt.exe
-wails build
-
-# 构建极简 CLI 版本，输出到 bin\ocgt.exe
-go build -o .\bin\ocgt.exe .\cmd\ocgt
-```
+2. Windows 用户通常下载 `ocgt-windows-amd64.exe`。
+3. 双击运行，程序默认监听 `127.0.0.1:8787`。
+4. 在 GUI 中保存 API Key 和模型配置。
+5. 点击环境变量修复和终端启动，然后在新终端运行 `claude`。
 
 ## 配置文件
 
-默认配置路径：
+默认路径：
 
 ```text
 %USERPROFILE%\.ocgt\config.json
 ```
 
-示例：
+核心配置示例：
 
 ```json
 {
   "listen": "127.0.0.1:8787",
   "upstream": "https://opencode.ai/zen/go",
   "request_timeout_seconds": 300,
+  "max_thinking_budget_tokens": 512,
   "active_profile": "opencode-go",
   "profiles": {
     "opencode-go": {
       "api_key_env": "OPENCODE_GO_API_KEY",
       "default_model": "kimi-k2.6",
       "model_aliases": {
-        "kimi": "kimi-k2.6",
         "opus": "kimi-k2.6",
         "sonnet": "qwen3.6-plus",
-        "haiku": "deepseek-v4-flash",
-        "qwen": "qwen3.6-plus",
-        "deepseek": "deepseek-v4-pro",
-        "glm": "glm-5.1"
+        "haiku": "deepseek-v4-flash"
       }
     }
   }
 }
 ```
 
-## 模型映射
+`max_thinking_budget_tokens` 支持：
 
-| Claude Code 请求 | 默认上游模型 | 用途 |
-| :--- | :--- | :--- |
-| `opus` / 含 `opus` 的 Claude 模型名 | `kimi-k2.6` | 复杂推理、重构、长上下文 |
-| `sonnet` / 含 `sonnet` 的 Claude 模型名 | `qwen3.6-plus` | 日常编码、较均衡的速度与质量 |
-| `haiku` / 含 `haiku` 的 Claude 模型名 | `deepseek-v4-flash` | 快速、低成本请求 |
-| `kimi` | `kimi-k2.6` | 直接指定 Kimi |
+- `-1`：关闭思考。
+- `0`：不主动设置预算。
+- `1..8192`：设置最大思考 token 预算。
+
+GUI 为了降低误配概率，只暴露固定档位。
+
+## 开发与构建
+
+需要 Go 1.22+。没有全局 Wails CLI 也可以直接使用仓库脚本：
+
+```powershell
+go test ./...
+go build ./...
+.\build.bat
+```
+
+输出示例：
+
+```text
+build\bin\ocgt_v0.1.7.exe
+```
+
+手动构建 GUI：
+
+```powershell
+go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+wails build -clean -ldflags "-X github.com/ethan-blue/open-code-go-tools/internal/version.Version=0.1.7"
+```
 
 ## CLI
 
@@ -120,9 +134,25 @@ ocgt serve
 ocgt models
 ocgt claude-env
 ocgt ccswitch
+ocgt version
 ```
 
-`ocgt ccswitch` 会输出可导入 CC Switch 的 provider JSON。推荐只保留一个 `ocgt-*` provider，旧的 astron provider 可以在 CC Switch 里删除，避免 `/model` 菜单继续显示历史选项。
+`ocgt ccswitch` 会输出可导入 CC Switch 的 provider JSON。建议只保留一个 `ocgt-*` provider，删除旧的 astron / 其他历史 provider，避免 Claude Code 的 `/model` 菜单继续显示旧选项。
+
+## Release
+
+推送 `v*` tag 会触发 GitHub Actions：
+
+- 构建 Windows、macOS、Linux GUI 二进制。
+- 从 tag 注入运行时版本号。
+- 上传平台产物和 `checksums.txt`。
+- 自动创建 GitHub Release。
+
+本地也可以用 GitHub CLI 手动创建 Release：
+
+```powershell
+gh release create v0.1.7 build\bin\ocgt_v0.1.7.exe --title "v0.1.7" --notes-file RELEASE_NOTES.md
+```
 
 ## License
 
