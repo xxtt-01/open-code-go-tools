@@ -10,25 +10,8 @@ permissions:
 
 jobs:
   build:
-    name: Build Wails GUI
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-22.04
-            platform: linux/amd64
-            output: ocgt-linux-amd64
-          - os: macos-latest
-            platform: darwin/amd64
-            output: ocgt-darwin-amd64
-          - os: macos-latest
-            platform: darwin/arm64
-            output: ocgt-darwin-arm64
-          - os: windows-latest
-            platform: windows/amd64
-            output: ocgt-windows-amd64.exe
-
-    runs-on: ${{ matrix.os }}
+    name: Build Windows Wails GUI
+    runs-on: windows-latest
     
     steps:
       - name: Checkout repository
@@ -39,12 +22,6 @@ jobs:
         with:
           go-version: '1.22'
 
-      - name: Install Linux GUI dependencies
-        if: startsWith(matrix.os, 'ubuntu')
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
-
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
 
@@ -52,30 +29,21 @@ jobs:
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          wails build -platform ${{ matrix.platform }} -clean -ldflags "-s -w -X github.com/ethan-blue/open-code-go-tools/internal/version.Version=${VERSION}"
-
-      - name: Prepare Unix Asset
-        if: matrix.os != 'windows-latest'
-        run: |
-          mkdir -p dist
-          binary="$(find build/bin -maxdepth 1 -type f -name 'ocgt*' | head -n 1)"
-          test -n "$binary"
-          cp "$binary" dist/${{ matrix.output }}
+          wails build -platform windows/amd64 -clean -ldflags "-s -w -X github.com/ethan-blue/open-code-go-tools/internal/version.Version=${VERSION}"
 
       - name: Prepare Windows Asset
-        if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path dist -Force
           $binary = Get-ChildItem -Path build/bin -File -Filter "ocgt*.exe" | Select-Object -First 1
           if (-not $binary) { throw "Built executable not found" }
-          Copy-Item -LiteralPath $binary.FullName -Destination dist/${{ matrix.output }} -Force
+          Copy-Item -LiteralPath $binary.FullName -Destination dist/ocgt-windows-amd64.exe -Force
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.output }}
-          path: dist/${{ matrix.output }}
+          name: ocgt-windows-amd64.exe
+          path: dist/ocgt-windows-amd64.exe
           retention-days: 1
 
   publish:
@@ -111,7 +79,7 @@ jobs:
             - Reduces initial GUI wait time and prevents duplicate app instances.
             - Fixes mojibake in user-facing text and release metadata.
 
-            Windows users should normally download `ocgt-windows-amd64.exe`.
+            Download `ocgt-windows-amd64.exe` for Windows.
           files: |
             dist/*
           generate_release_notes: true

@@ -1,4 +1,4 @@
-# ocgt v0.1.7
+# ocgt v0.1.8
 
 这版重点修复 Claude Code 接入体验、思考过程兼容、启动等待和发布流程。
 
@@ -23,5 +23,5 @@
 Windows 本地产物：
 
 ```text
-build\bin\ocgt_v0.1.7.exe
+build\bin\ocgt_v0.1.8.exe
 ```

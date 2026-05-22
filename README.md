@@ -2,7 +2,7 @@
 
 `ocgt`（OpenCode Go Tools）是面向 Claude Code 的本地兼容代理。它把 Claude Code 的 Anthropic Messages 请求转换为 OpenAI Chat Completions 风格上游可接收的请求，并提供一个 Wails 原生 GUI，用于保存 OpenCode Go API Key、配置模型映射、修复 Claude Code 环境变量、拉起已配置终端、查看实时请求日志。
 
-当前 GUI 版本：`v0.1.7`。
+当前 GUI 版本：`v0.1.8`。
 
 ## 这版解决了什么
 
@@ -116,14 +116,14 @@ go build ./...
 输出示例：
 
 ```text
-build\bin\ocgt_v0.1.7.exe
+build\bin\ocgt_v0.1.8.exe
 ```
 
 手动构建 GUI：
 
 ```powershell
 go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
-wails build -clean -ldflags "-X github.com/ethan-blue/open-code-go-tools/internal/version.Version=0.1.7"
+wails build -clean -ldflags "-X github.com/ethan-blue/open-code-go-tools/internal/version.Version=0.1.8"
 ```
 
 ## CLI
@@ -143,15 +143,15 @@ ocgt version
 
 推送 `v*` tag 会触发 GitHub Actions：
 
-- 构建 Windows、macOS、Linux GUI 二进制。
+- 构建 Windows GUI 二进制。
 - 从 tag 注入运行时版本号。
-- 上传平台产物和 `checksums.txt`。
+- 上传 `ocgt-windows-amd64.exe` 和 `checksums.txt`。
 - 自动创建 GitHub Release。
 
 本地也可以用 GitHub CLI 手动创建 Release：
 
 ```powershell
-gh release create v0.1.7 build\bin\ocgt_v0.1.7.exe --title "v0.1.7" --notes-file RELEASE_NOTES.md
+gh release create v0.1.8 build\bin\ocgt_v0.1.8.exe --title "v0.1.8" --notes-file RELEASE_NOTES.md
 ```
 
 ## License
