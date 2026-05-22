@@ -19,7 +19,7 @@ import (
 	"github.com/ethan-blue/open-code-go-tools/internal/proxy"
 )
 
-var version = "0.1.4"
+var version = "0.1.6"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
