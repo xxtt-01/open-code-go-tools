@@ -23,6 +23,8 @@ type Config struct {
 	RequestTimeoutSeconds int                `json:"request_timeout_seconds,omitempty"`
 	ActiveProfile         string             `json:"active_profile"`
 	Profiles              map[string]Profile `json:"profiles"`
+	LocalAuthToken        string             `json:"local_auth_token,omitempty"`        // Optional local auth token for proxy access
+	MaxConcurrentRequests int                `json:"max_concurrent_requests,omitempty"` // Optional concurrent request limit
 }
 
 type Profile struct {

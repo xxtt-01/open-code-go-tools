@@ -155,7 +155,7 @@ func requestLogger(next http.Handler) http.Handler {
 		if origin := r.Header.Get("Origin"); origin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-Ocgt-Profile")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-Ocgt-Profile, X-Ocgt-Local-Token")
 		} else {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Headers", "*")
@@ -171,6 +171,41 @@ func requestLogger(next http.Handler) http.Handler {
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
 		log.Printf("%s %s status=%d %s", r.Method, r.URL.RequestURI(), rec.status, time.Since(start).Round(time.Millisecond))
+	})
+}
+
+// authMiddleware checks for local auth token if configured
+func authMiddleware(token string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Skip auth for health check and OPTIONS
+		if r.URL.Path == "/healthz" || r.Method == "OPTIONS" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Skip auth for static web assets
+		if strings.HasPrefix(r.URL.Path, "/ocgt/web/") || r.URL.Path == "/" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Check auth token if configured
+		if token != "" {
+			providedToken := r.Header.Get("X-Ocgt-Local-Token")
+			if providedToken == "" {
+				// Also check Authorization header with Bearer prefix
+				authHeader := r.Header.Get("Authorization")
+				if strings.HasPrefix(authHeader, "Bearer ") {
+					providedToken = strings.TrimPrefix(authHeader, "Bearer ")
+				}
+			}
+			if providedToken != token {
+				writeError(w, http.StatusUnauthorized, errors.New("invalid or missing auth token"))
+				return
+			}
+		}
+
+		next.ServeHTTP(w, r)
 	})
 }
 

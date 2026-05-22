@@ -270,10 +270,6 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func isDeepSeekThinkingModel(model string) bool {
-	return strings.HasPrefix(strings.ToLower(model), "deepseek-v4")
-}
-
 func singleJoin(base, path string) string {
 	base = strings.TrimRight(base, "/")
 	if base == "" {

@@ -146,6 +146,12 @@ async function loadStatus() {
                 inputTimeout.value = seconds.toString();
             }
         }
+        // Show auth status
+        const elAuth = document.getElementById('status-auth');
+        if (elAuth) {
+            elAuth.textContent = systemStatus.auth_enabled ? '已启用' : '未启用';
+            elAuth.style.color = systemStatus.auth_enabled ? 'var(--green)' : 'var(--gray)';
+        }
         renderEnvCode();
         renderCCSwitchCode();
         setProxyConnectionState('online');

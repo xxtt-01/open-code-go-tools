@@ -32,7 +32,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/ocgt/api/history", s.apiHistory)
 
 	mux.HandleFunc("/", s.serveStatic)
-	return requestLogger(mux)
+	// Apply auth middleware if token is configured, then logging
+	handler := requestLogger(mux)
+	if s.config.LocalAuthToken != "" {
+		handler = authMiddleware(s.config.LocalAuthToken, handler)
+	}
+	return handler
 }
 
 func (s *Server) ListenAndServe(ctx context.Context) error {
@@ -234,9 +239,8 @@ func (s *Server) forwardAnthropicMessages(w http.ResponseWriter, r *http.Request
 func (s *Server) forwardChatCompletions(w http.ResponseWriter, r *http.Request, profile config.Profile, payload anthropicRequest) {
 	chatReq := anthropicToOpenAI(payload)
 	s.attachReasoningContent(chatReq.Messages)
-	if isDeepSeekThinkingModel(chatReq.Model) {
-		chatReq.Thinking = map[string]any{"type": "disabled"}
-	}
+	// Don't disable thinking - let the model return reasoning_content naturally
+	// This allows DeepSeek and other thinking models to show their reasoning process
 	bridgeToolStream := payload.Stream && len(payload.Tools) > 0
 	if bridgeToolStream {
 		chatReq.Stream = false
@@ -479,6 +483,7 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 		"config_path":             s.configPath,
 		"active_profile":          activeProfile,
 		"default_model":           profile.DefaultModel,
+		"auth_enabled":            s.config.LocalAuthToken != "",
 	}
 	writeJSON(w, http.StatusOK, status)
 }
