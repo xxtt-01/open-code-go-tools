@@ -35,6 +35,7 @@ type Profile struct {
 	DefaultModel  string            `json:"default_model,omitempty"`
 	ModelAliases  map[string]string `json:"model_aliases,omitempty"`
 	MessageModels []string          `json:"message_models,omitempty"`
+	FallbackChain []string          `json:"fallback_chain,omitempty"`
 	Headers       map[string]string `json:"headers,omitempty"`
 }
 
@@ -78,6 +79,7 @@ func Example() Config {
 					"haiku":    "deepseek-v4-flash",
 				},
 				MessageModels: []string{"minimax-m2.5", "minimax-m2.7"},
+				FallbackChain: []string{"kimi-k2.6", "qwen3.6-plus", "deepseek-v4-flash"},
 			},
 		},
 	}

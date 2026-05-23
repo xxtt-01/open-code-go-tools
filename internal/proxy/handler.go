@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -51,6 +52,10 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 15 * time.Second,
 	}
+
+	// Start configuration hot-reloading watcher
+	go s.watchConfig(ctx)
+
 	go func() {
 		<-ctx.Done()
 		log.Println("shutting down...")
@@ -65,6 +70,42 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		return nil
 	}
 	return err
+}
+
+func (s *Server) watchConfig(ctx context.Context) {
+	if s.configPath == "" {
+		return
+	}
+
+	var lastModTime time.Time
+	if info, err := os.Stat(s.configPath); err == nil {
+		lastModTime = info.ModTime()
+	}
+
+	ticker := time.NewTicker(2500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			info, err := os.Stat(s.configPath)
+			if err != nil {
+				continue
+			}
+			if info.ModTime().After(lastModTime) {
+				lastModTime = info.ModTime()
+				cfg, err := config.Load(s.configPath)
+				if err != nil {
+					log.Printf("[HotReload] Failed to load config changes: %v", err)
+					continue
+				}
+				s.ApplyConfig(cfg)
+				log.Printf("[HotReload] Configuration reloaded successfully from %s", s.configPath)
+			}
+		}
+	}
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
@@ -193,107 +234,240 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) forwardAnthropicMessages(w http.ResponseWriter, r *http.Request, profile config.Profile, payload anthropicRequest, original []byte) {
-	var raw map[string]any
-	if err := json.Unmarshal(original, &raw); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	raw["model"] = payload.Model
-	body, err := json.Marshal(raw)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	req, err := s.newUpstreamRequest(r.Context(), http.MethodPost, "/v1/messages", bytes.NewReader(body), profile)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if payload.Stream {
-		prepareStreamingUpstreamRequest(req)
-	}
-	applyAnthropicAuth(req, profile)
-	for _, key := range []string{"Anthropic-Beta"} {
-		if val := r.Header.Get(key); val != "" {
-			req.Header.Set(key, val)
+	// Construct candidate models to try: PrimaryModel, followed by FallbackChain
+	candidates := []string{payload.Model}
+	for _, fallback := range profile.FallbackChain {
+		resolved := profile.ResolveModel(fallback)
+		if resolved != "" && resolved != payload.Model {
+			duplicate := false
+			for _, c := range candidates {
+				if c == resolved {
+					duplicate = true
+					break
+				}
+			}
+			if !duplicate {
+				candidates = append(candidates, resolved)
+			}
 		}
 	}
-	start := time.Now()
-	resp, err := s.client.Do(req)
-	if err != nil {
-		status := proxyErrorStatus(err)
-		writeError(w, status, err)
-		s.addHistoryEntryWithError(r.Method, r.URL.Path, status, time.Since(start), payload.Model, "messages", err.Error())
+
+	var lastErr error
+	var lastStatus int
+	var lastBody []byte
+
+	for idx, candidate := range candidates {
+		// Circuit Breaker check: skip if tripped, unless this is the only or last option
+		if s.isModelCircuitTripped(candidate) && idx < len(candidates)-1 {
+			log.Printf("[CircuitBreaker] Skipping tripped model %q in fallback chain", candidate)
+			continue
+		}
+
+		var raw map[string]any
+		if err := json.Unmarshal(original, &raw); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		raw["model"] = candidate
+		body, err := json.Marshal(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		req, err := s.newUpstreamRequest(r.Context(), http.MethodPost, "/v1/messages", bytes.NewReader(body), profile)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if payload.Stream {
+			prepareStreamingUpstreamRequest(req)
+		}
+		applyAnthropicAuth(req, profile)
+		for _, key := range []string{"Anthropic-Beta"} {
+			if val := r.Header.Get(key); val != "" {
+				req.Header.Set(key, val)
+			}
+		}
+
+		start := time.Now()
+		resp, err := s.client.Do(req)
+		duration := time.Since(start)
+
+		if err != nil {
+			s.recordModelFailure(candidate)
+			lastErr = err
+			lastStatus = proxyErrorStatus(err)
+			log.Printf("[Fallback] Request to model %q failed: %v. Remaining candidates: %d", candidate, err, len(candidates)-idx-1)
+			s.addHistoryEntryWithError(r.Method, r.URL.Path, lastStatus, duration, candidate, "messages", err.Error())
+			continue
+		}
+
+		defer resp.Body.Close()
+		log.Printf("upstream route=messages model=%s status=%d", candidate, resp.StatusCode)
+
+		if resp.StatusCode >= 400 {
+			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, MaxBodySize))
+			errText := upstreamErrorSummary(resp.StatusCode, respBody)
+
+			// Record failure in Circuit Breaker
+			s.recordModelFailure(candidate)
+
+			// If it's a client error (4xx) other than rate limit (429), do not fallback, return immediately.
+			if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
+				writeUpstreamError(w, resp.StatusCode, respBody)
+				s.addHistoryEntryWithError(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "messages", errText)
+				return
+			}
+
+			// Otherwise, save state and try next fallback model
+			lastErr = fmt.Errorf("upstream model %s returned status %d: %s", candidate, resp.StatusCode, errText)
+			lastStatus = resp.StatusCode
+			lastBody = respBody
+			s.addHistoryEntryWithError(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "messages", errText)
+			continue
+		}
+
+		// Success!
+		s.recordModelSuccess(candidate)
+		copyHeaders(w.Header(), resp.Header)
+		stripHopByHopHeaders(w.Header())
+		w.WriteHeader(resp.StatusCode)
+		_, _ = copyResponse(w, resp.Body)
+		s.addHistoryEntry(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "messages")
 		return
 	}
-	defer resp.Body.Close()
-	duration := time.Since(start)
-	log.Printf("upstream route=messages model=%s status=%d", payload.Model, resp.StatusCode)
-	if resp.StatusCode >= 400 {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, MaxBodySize))
-		errText := upstreamErrorSummary(resp.StatusCode, data)
-		writeUpstreamError(w, resp.StatusCode, data)
-		s.addHistoryEntryWithError(r.Method, r.URL.Path, resp.StatusCode, duration, payload.Model, "messages", errText)
+
+	// All fallback candidates failed
+	if lastErr != nil {
+		if len(lastBody) > 0 {
+			writeUpstreamError(w, lastStatus, lastBody)
+		} else {
+			writeError(w, lastStatus, lastErr)
+		}
 		return
 	}
-	copyHeaders(w.Header(), resp.Header)
-	stripHopByHopHeaders(w.Header())
-	w.WriteHeader(resp.StatusCode)
-	_, _ = copyResponse(w, resp.Body)
-	s.addHistoryEntry(r.Method, r.URL.Path, resp.StatusCode, duration, payload.Model, "messages")
+	writeError(w, http.StatusBadGateway, fmt.Errorf("all fallback candidates failed"))
 }
 
 func (s *Server) forwardChatCompletions(w http.ResponseWriter, r *http.Request, profile config.Profile, payload anthropicRequest) {
-	chatReq := anthropicToOpenAI(payload)
-	chatReq.Thinking = boundedThinkingPayload(payload.Thinking, s.thinkingBudgetTokens())
-	s.attachReasoningContent(chatReq.Messages)
-	body, err := json.Marshal(chatReq)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+	// Construct candidate models to try: PrimaryModel, followed by FallbackChain
+	candidates := []string{payload.Model}
+	for _, fallback := range profile.FallbackChain {
+		resolved := profile.ResolveModel(fallback)
+		if resolved != "" && resolved != payload.Model {
+			duplicate := false
+			for _, c := range candidates {
+				if c == resolved {
+					duplicate = true
+					break
+				}
+			}
+			if !duplicate {
+				candidates = append(candidates, resolved)
+			}
+		}
+	}
+
+	var lastErr error
+	var lastStatus int
+	var lastBody []byte
+
+	for idx, candidate := range candidates {
+		// Circuit Breaker check: skip if tripped, unless this is the only or last option
+		if s.isModelCircuitTripped(candidate) && idx < len(candidates)-1 {
+			log.Printf("[CircuitBreaker] Skipping tripped model %q in fallback chain", candidate)
+			continue
+		}
+
+		chatReq := anthropicToOpenAI(payload)
+		chatReq.Model = candidate
+		chatReq.Thinking = boundedThinkingPayload(payload.Thinking, s.thinkingBudgetTokens())
+		s.attachReasoningContent(chatReq.Messages)
+		body, err := json.Marshal(chatReq)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		req, err := s.newUpstreamRequest(r.Context(), http.MethodPost, "/v1/chat/completions", bytes.NewReader(body), profile)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if payload.Stream {
+			prepareStreamingUpstreamRequest(req)
+		}
+
+		start := time.Now()
+		resp, err := s.client.Do(req)
+		duration := time.Since(start)
+
+		if err != nil {
+			s.recordModelFailure(candidate)
+			lastErr = err
+			lastStatus = proxyErrorStatus(err)
+			log.Printf("[Fallback] Request to model %q failed: %v. Remaining candidates: %d", candidate, err, len(candidates)-idx-1)
+			s.addHistoryEntryWithError(r.Method, r.URL.Path, lastStatus, duration, candidate, "chat/completions", err.Error())
+			continue
+		}
+
+		defer resp.Body.Close()
+		log.Printf("upstream route=chat/completions model=%s status=%d", candidate, resp.StatusCode)
+
+		if resp.StatusCode >= 400 {
+			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, MaxBodySize))
+			errText := upstreamErrorSummary(resp.StatusCode, respBody)
+
+			// Record failure in Circuit Breaker
+			s.recordModelFailure(candidate)
+
+			// If it's a client error (4xx) other than rate limit (429), do not fallback, return immediately.
+			if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
+				writeUpstreamError(w, resp.StatusCode, respBody)
+				s.addHistoryEntryWithError(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "chat/completions", errText)
+				return
+			}
+
+			// Otherwise, save state and try next fallback model
+			lastErr = fmt.Errorf("upstream model %s returned status %d: %s", candidate, resp.StatusCode, errText)
+			lastStatus = resp.StatusCode
+			lastBody = respBody
+			s.addHistoryEntryWithError(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "chat/completions", errText)
+			continue
+		}
+
+		// Success!
+		s.recordModelSuccess(candidate)
+		if payload.Stream {
+			streamOpenAIAsAnthropic(w, resp.Body, candidate, s.setReasoningLocked)
+			s.addHistoryEntry(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "chat/completions (stream)")
+			return
+		}
+
+		var out openAIResponse
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			s.addHistoryEntry(r.Method, r.URL.Path, http.StatusBadGateway, duration, candidate, "chat/completions")
+			return
+		}
+		s.cacheReasoningContent(out)
+		message := openAIToAnthropic(out, candidate)
+		writeJSON(w, http.StatusOK, message)
+		s.addHistoryEntry(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "chat/completions")
 		return
 	}
-	req, err := s.newUpstreamRequest(r.Context(), http.MethodPost, "/v1/chat/completions", bytes.NewReader(body), profile)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+
+	// All fallback candidates failed
+	if lastErr != nil {
+		if len(lastBody) > 0 {
+			writeUpstreamError(w, lastStatus, lastBody)
+		} else {
+			writeError(w, lastStatus, lastErr)
+		}
 		return
 	}
-	req.Header.Set("Content-Type", "application/json")
-	if payload.Stream {
-		prepareStreamingUpstreamRequest(req)
-	}
-	start := time.Now()
-	resp, err := s.client.Do(req)
-	if err != nil {
-		status := proxyErrorStatus(err)
-		writeError(w, status, err)
-		s.addHistoryEntryWithError(r.Method, r.URL.Path, status, time.Since(start), payload.Model, "chat/completions", err.Error())
-		return
-	}
-	defer resp.Body.Close()
-	duration := time.Since(start)
-	log.Printf("upstream route=chat/completions model=%s status=%d", payload.Model, resp.StatusCode)
-	if resp.StatusCode >= 400 {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, MaxBodySize))
-		writeUpstreamError(w, resp.StatusCode, data)
-		s.addHistoryEntryWithError(r.Method, r.URL.Path, resp.StatusCode, duration, payload.Model, "chat/completions", upstreamErrorSummary(resp.StatusCode, data))
-		return
-	}
-	if payload.Stream {
-		streamOpenAIAsAnthropic(w, resp.Body, payload.Model, s.setReasoningLocked)
-		s.addHistoryEntry(r.Method, r.URL.Path, resp.StatusCode, duration, payload.Model, "chat/completions (stream)")
-		return
-	}
-	var out openAIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		writeError(w, http.StatusBadGateway, err)
-		s.addHistoryEntry(r.Method, r.URL.Path, http.StatusBadGateway, duration, payload.Model, "chat/completions")
-		return
-	}
-	s.cacheReasoningContent(out)
-	message := openAIToAnthropic(out, payload.Model)
-	writeJSON(w, http.StatusOK, message)
-	s.addHistoryEntry(r.Method, r.URL.Path, resp.StatusCode, duration, payload.Model, "chat/completions")
+	writeError(w, http.StatusBadGateway, fmt.Errorf("all fallback candidates failed"))
 }
 
 func (s *Server) thinkingBudgetTokens() int {

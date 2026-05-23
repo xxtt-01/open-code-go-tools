@@ -3,6 +3,181 @@ let API_BASE = 'http://127.0.0.1:8787';
 let systemStatus = null;
 let currentShell = 'powershell';
 let proxyReady = false;
+let currentLang = localStorage.getItem('lang') || 'zh'; // default 'zh'
+
+// Bilingual Dictionary
+const i18n = {
+    zh: {
+        nav_dashboard: "系统状态",
+        nav_settings: "配置管理",
+        nav_terminal: "终端启动",
+        nav_history: "流量监控",
+        status_running: "代理运行中",
+        status_connecting: "代理连接中",
+        status_online: "代理已连接",
+        status_offline: "代理未连接",
+        status_api_key_configured: "已配置",
+        status_api_key_not_configured: "未配置",
+        status_auth_enabled: "已启用",
+        status_auth_disabled: "未启用",
+        status_model_unset: "未设定",
+        status_saving: "保存中...",
+        status_success: "已保存 ✓",
+        service_normal: "服务正常",
+        service_connecting: "服务连接中",
+        service_offline: "服务离线",
+        title_dashboard: "系统状态监控",
+        subtitle_dashboard: "查看当前代理服务运行指标与后台状态",
+        title_settings: "一键配置管理中心",
+        subtitle_settings: "快速设置您的 API 密钥与高阶 Claude 模型代理映射",
+        title_terminal: "一键控制台激活",
+        subtitle_terminal: "一键启动已载入代理环境变量的原生命令行窗口",
+        title_history: "流量雷达监控",
+        subtitle_history: "实时捕获并通过仪表盘统计来自 Claude Code 的 API 请求日志",
+        lbl_listen: "监听地址",
+        lbl_upstream: "上游 API 节点",
+        lbl_timeout: "请求超时",
+        lbl_api_key: "API Key 状态",
+        lbl_auth: "本地认证",
+        lbl_profile: "当前活跃 Profile",
+        lbl_model: "默认解析模型",
+        lbl_config_path: "本地配置文件路径",
+        btn_open_folder: "打开所在文件夹",
+        sett_title: "一键配置管理中心",
+        sett_profile: "当前配置 Profile",
+        sett_default_model: "全局默认模型 (Default Model)",
+        sett_api_key: "OpenCode Go API Key (代理密钥)",
+        placeholder_api_key: "请输入您的 sk-... 密钥",
+        sett_timeout: "请求超时检查 (秒，1-3600)",
+        sett_thinking: "思考强度",
+        opt_thinking_256: "快速 · 低延迟",
+        opt_thinking_512: "慢速 · 强力",
+        opt_thinking_1024: "深度 · 复杂任务",
+        opt_thinking_2048: "极客 · 强力重构",
+        opt_thinking_off: "关闭思考",
+        sett_mapping_title: "Claude 模型映射设置 (Real-time Alias Mapping)",
+        sett_mapping_sonnet: "Sonnet 映射目标",
+        sett_mapping_haiku: "Haiku 映射目标",
+        sett_mapping_opus: "Opus 映射目标",
+        opt_custom: "-- 自定义模型 --",
+        btn_save_config: "保存并热重载配置",
+        btn_repair_env: "一键修复 Claude Code 系统环境变量",
+        hint_save: "保存后同步更新 config.json、热重载 Go 服务，并清理旧登录 Token/CC Switch 本地路由残留",
+        hint_tip: "💡 提示：在“终端启动”页中只需选择并一键启动任意一种您习惯的命令行窗口即可，无需重复配置多种终端。",
+        term_title: "一键唤醒代理控制台",
+        term_shell_type: "目标命令行类型",
+        btn_launch_term: "一键拉起配置终端 (Launch)",
+        btn_persistent_env: "修复以后所有新终端环境变量",
+        hint_launch: "一键注入当前 Profile 代理变量并打开原生 shell。直接打 <code>claude</code> 即可开始运行！",
+        guide_title: "💡 快捷运行极简指南",
+        guide_1: "在上方选项卡选择您常用的命令终端。",
+        guide_2: "点击 <b>“一键拉起配置终端”</b>，系统会自动唤醒控制台。",
+        guide_3: "直接在拉起的窗口中键入 <code>claude</code> 即可启动 AI 代码对话。",
+        guide_4: "（可选）若要在已有终端中工作，可点击右侧的复制按钮导入配置。",
+        guide_5: "<b>提示</b>：终端类型只需选择并一键启动任意一个即可，无需全部配置或启动。",
+        code_env_title: "Claude Code 环境变量 (Env Setup)",
+        code_ccswitch_title: "CC Switch 提供商配置 (JSON Import)",
+        btn_copy: "复制",
+        btn_copied: "已复制 ✓",
+        traf_total: "总吞吐请求量",
+        traf_rate: "请求成功率",
+        traf_latency: "平均响应延时",
+        th_time: "时间",
+        th_method: "方法",
+        th_path: "路由路径",
+        th_model: "解析模型",
+        th_status: "状态码",
+        th_duration: "耗时",
+        th_error: "错误原因",
+        traf_empty: "暂无流量记录。请使用一键终端或在其他 Shell 中向代理发送请求...",
+        traf_listening: "实时流量雷达持续监听中"
+    },
+    en: {
+        nav_dashboard: "Status",
+        nav_settings: "Configuration",
+        nav_terminal: "Terminal",
+        nav_history: "Traffic Radar",
+        status_running: "Proxy Running",
+        status_connecting: "Connecting...",
+        status_online: "Connected",
+        status_offline: "Disconnected",
+        status_api_key_configured: "Configured",
+        status_api_key_not_configured: "Unconfigured",
+        status_auth_enabled: "Enabled",
+        status_auth_disabled: "Disabled",
+        status_model_unset: "Unset",
+        status_saving: "Saving...",
+        status_success: "Saved ✓",
+        service_normal: "Normal",
+        service_connecting: "Connecting...",
+        service_offline: "Offline",
+        title_dashboard: "System Status Radar",
+        subtitle_dashboard: "Monitor real-time proxy metrics and server status",
+        title_settings: "Configuration Center",
+        subtitle_settings: "Manage your upstream API keys, timeouts, and Claude model aliases",
+        title_terminal: "One-Click Terminal Activator",
+        subtitle_terminal: "Launch pre-configured shell terminals with proxy environments loaded",
+        title_history: "Traffic Monitoring Radar",
+        subtitle_history: "Real-time capture of API logs and metrics received from Claude Code",
+        lbl_listen: "Listen Address",
+        lbl_upstream: "Upstream Node",
+        lbl_timeout: "Request Timeout",
+        lbl_api_key: "API Key Status",
+        lbl_auth: "Local Auth",
+        lbl_profile: "Active Profile",
+        lbl_model: "Default Model",
+        lbl_config_path: "Local Config Path",
+        btn_open_folder: "Open Directory",
+        sett_title: "Easy Configuration Center",
+        sett_profile: "Current Profile",
+        sett_default_model: "Global Default Model",
+        sett_api_key: "OpenCode Go API Key",
+        placeholder_api_key: "Enter your OpenCode sk-... API Key",
+        sett_timeout: "Request Timeout (Seconds, 1-3600)",
+        sett_thinking: "Reasoning Intensity",
+        opt_thinking_256: "Fast · Low Latency",
+        opt_thinking_512: "Slow · Powerful",
+        opt_thinking_1024: "Deep · Complex Tasks",
+        opt_thinking_2048: "Geek · Heavy Refactoring",
+        opt_thinking_off: "Disable Reasoning",
+        sett_mapping_title: "Claude Model Alias Mapping",
+        sett_mapping_sonnet: "Claude Sonnet Mapping",
+        sett_mapping_haiku: "Claude Haiku Mapping",
+        sett_mapping_opus: "Claude Opus Mapping",
+        opt_custom: "-- Custom Model --",
+        btn_save_config: "Save & Hot-Reload",
+        btn_repair_env: "One-click Repair Claude Code System Env",
+        hint_save: "Saves configuration, updates config.json, hot-reloads Go proxy, and clears old cache/CC Switch conflicts",
+        hint_tip: "💡 Tip: Just select and launch any terminal shell of your choice. No need to repeatedly configure all shells.",
+        term_title: "Spawn Pre-configured Console",
+        term_shell_type: "Target Shell / Console Type",
+        btn_launch_term: "Launch Pre-configured Terminal",
+        btn_persistent_env: "Repair System Env (Persistent for future shells)",
+        hint_launch: "Injects proxy environment variables and spawns a native shell. Directly run <code>claude</code> to begin!",
+        guide_title: "💡 Quick Start Guide",
+        guide_1: "Select your preferred shell type in the tabs above.",
+        guide_2: "Click \"Launch Pre-configured Terminal\" to summon the console.",
+        guide_3: "Directly type <code>claude</code> and press Enter inside the shell to start coding!",
+        guide_4: "(Optional) Copy env variables on the right if using an existing IDE terminal.",
+        guide_5: "Note: You only need to choose and start one shell type, no need to configure all of them.",
+        code_env_title: "Claude Code Env Variables",
+        code_ccswitch_title: "CC Switch Provider Config (JSON Import)",
+        btn_copy: "Copy",
+        btn_copied: "Copied ✓",
+        traf_total: "Total Requests",
+        traf_rate: "Success Rate",
+        traf_latency: "Average Latency",
+        th_time: "Time",
+        th_method: "Method",
+        th_path: "Request Path",
+        th_model: "Resolved Model",
+        th_status: "Status",
+        th_duration: "Duration",
+        th_error: "Error Details",
+        traf_empty: "No traffic captured yet. Launch a terminal or make API requests through the proxy...",
+        traf_listening: "Live Traffic Radar Active & Listening"
+    }
+};
 
 // DOM
 const elListen = document.getElementById('status-listen');
@@ -32,6 +207,7 @@ const btnCopyEnv = document.getElementById('copy-env-btn');
 const btnCopyCCSwitch = document.getElementById('copy-ccswitch-btn');
 const tbodyHistory = document.getElementById('history-tbody');
 const themeToggleBtn = document.getElementById('themeToggleBtn');
+const langToggleBtn = document.getElementById('langToggleBtn');
 const statusPill = document.getElementById('statusPill');
 const uptimeBadge = document.querySelector('.uptime-badge');
 
@@ -39,6 +215,7 @@ let isInitializing = false;
 
 document.addEventListener('DOMContentLoaded', () => {
     setupEventHandlers();
+    updateLanguageDOM();
     initializeApp();
     setInterval(async () => {
         if (proxyReady) {
@@ -118,10 +295,11 @@ async function apiFetch(path, options = {}, timeoutMs = 8000) {
 }
 
 function setProxyConnectionState(state) {
+    const dict = i18n[currentLang];
     const meta = {
-        connecting: { text: '代理连接中', className: 'connecting' },
-        online: { text: '代理已连接', className: 'online' },
-        offline: { text: '代理未连接', className: 'offline' }
+        connecting: { text: dict.status_connecting, className: 'connecting' },
+        online: { text: dict.status_online, className: 'online' },
+        offline: { text: dict.status_offline, className: 'offline' }
     }[state];
     if (!meta) return;
 
@@ -147,10 +325,13 @@ async function loadStatus() {
         elListen.textContent = systemStatus.listen;
         elUpstream.textContent = systemStatus.upstream;
         elProfile.textContent = systemStatus.active_profile;
-        elModel.textContent = systemStatus.default_model || '未设定';
+        
+        const dict = i18n[currentLang];
+        elModel.textContent = systemStatus.default_model || dict.status_model_unset;
         elConfigPath.textContent = systemStatus.config_path;
+        
         if (elApiKey) {
-            elApiKey.textContent = systemStatus.api_key_configured === false ? '未配置' : '已配置';
+            elApiKey.textContent = systemStatus.api_key_configured === false ? dict.status_api_key_not_configured : dict.status_api_key_configured;
             elApiKey.style.color = systemStatus.api_key_configured === false ? 'var(--yellow)' : 'var(--green)';
         }
         if (elTimeout) {
@@ -169,7 +350,7 @@ async function loadStatus() {
         // Show auth status
         const elAuth = document.getElementById('status-auth');
         if (elAuth) {
-            elAuth.textContent = systemStatus.auth_enabled ? '已启用' : '未启用';
+            elAuth.textContent = systemStatus.auth_enabled ? dict.status_auth_enabled : dict.status_auth_disabled;
             elAuth.style.color = systemStatus.auth_enabled ? 'var(--green)' : 'var(--gray)';
         }
         renderEnvCode();
@@ -177,7 +358,7 @@ async function loadStatus() {
         setProxyConnectionState('online');
         if (systemStatus.api_key_configured === false && uptimeBadge) {
             const text = uptimeBadge.querySelector('span:last-child');
-            if (text) text.textContent = '代理已连接，密钥未配置';
+            if (text) text.textContent = currentLang === 'zh' ? '代理已连接，密钥未配置' : 'Connected, API Key Unconfigured';
         }
         return true;
     } catch (err) {
@@ -222,7 +403,7 @@ function setThinkingBudgetValue(value) {
     if (!opt) {
         opt = document.createElement('option');
         opt.value = value;
-        opt.textContent = `${value} · 当前自定义值`;
+        opt.textContent = `${value} · ${currentLang === 'zh' ? '当前自定义值' : 'Custom value'}`;
         inputThinkingBudget.insertBefore(opt, inputThinkingBudget.lastElementChild);
     }
     inputThinkingBudget.value = value;
@@ -285,15 +466,6 @@ function setupEventHandlers() {
     // 侧边栏多工作区视图切换
     const navItems = document.querySelectorAll('.nav-item');
     const views = document.querySelectorAll('.view');
-    const titleEl = document.getElementById('current-view-title');
-    const subtitleEl = document.getElementById('current-view-subtitle');
-
-    const viewMeta = {
-        dashboard: { title: "系统状态监控", subtitle: "查看当前代理服务运行指标与后台状态" },
-        settings: { title: "一键配置管理中心", subtitle: "快速设置您的 API 密钥与高阶 Claude 模型代理映射" },
-        terminal: { title: "一键控制台激活", subtitle: "一键启动已载入代理环境变量的原生命令行窗口" },
-        history: { title: "流量雷达监控", subtitle: "实时捕获并通过仪表盘统计来自 Claude Code 的 API 请求日志" }
-    };
 
     navItems.forEach(item => {
         item.addEventListener('click', () => {
@@ -310,11 +482,7 @@ function setupEventHandlers() {
             if (targetView) targetView.classList.add('active');
 
             // 3. 动态更新顶栏标题与副标题
-            const meta = viewMeta[targetViewId];
-            if (meta) {
-                titleEl.textContent = meta.title;
-                subtitleEl.textContent = meta.subtitle;
-            }
+            updateActiveViewHeaders();
         });
     });
 
@@ -348,14 +516,13 @@ function setupEventHandlers() {
         const timeoutSeconds = inputTimeout ? inputTimeout.value.trim() : '300';
         const thinkingBudget = inputThinkingBudget ? inputThinkingBudget.value.trim() : '512';
         const timeoutNumber = Number(timeoutSeconds);
-        const thinkingBudgetNumber = Number(thinkingBudget);
 
         if (!Number.isInteger(timeoutNumber) || timeoutNumber < 1 || timeoutNumber > 3600) {
-            alert('请求超时必须是 1 到 3600 之间的整数秒。');
+            alert(currentLang === 'zh' ? '请求超时必须是 1 到 3600 之间的整数秒。' : 'Request timeout must be an integer between 1 and 3600 seconds.');
             return;
         }
         if (!isAllowedThinkingBudget(thinkingBudget)) {
-            alert('请选择有效的思考强度。');
+            alert(currentLang === 'zh' ? '请选择有效的思考强度。' : 'Please select a valid reasoning strength.');
             return;
         }
 
@@ -372,12 +539,12 @@ function setupEventHandlers() {
                     setTimeout(() => setButtonState(btnSaveAllConfig, 'idle'), 1500);
                 } else {
                     setButtonState(btnSaveAllConfig, 'idle');
-                    alert('保存失败: ' + res);
+                    alert((currentLang === 'zh' ? '保存失败: ' : 'Save failed: ') + res);
                 }
             } catch (err) {
                 console.error('Failed to save config via Wails:', err);
                 setButtonState(btnSaveAllConfig, 'idle');
-                alert('保存出错: ' + err.message);
+                alert((currentLang === 'zh' ? '保存出错: ' : 'Save error: ') + err.message);
             }
         } else {
             // Fallback for API call if running in browser directly
@@ -391,7 +558,7 @@ function setupEventHandlers() {
                         default_model: defModel,
                         model_aliases: { sonnet, haiku, opus },
                         request_timeout_seconds: timeoutNumber,
-                        max_thinking_budget_tokens: thinkingBudgetNumber
+                        max_thinking_budget_tokens: Number(thinkingBudget)
                     })
                 });
                 if (resp.ok) {
@@ -401,7 +568,7 @@ function setupEventHandlers() {
                     setTimeout(() => setButtonState(btnSaveAllConfig, 'idle'), 1500);
                 } else {
                     setButtonState(btnSaveAllConfig, 'idle');
-                    alert('保存失败，请检查控制台。');
+                    alert(currentLang === 'zh' ? '保存失败，请检查控制台。' : 'Save failed, please check console.');
                 }
             } catch (err) {
                 console.error('Fallback save error:', err);
@@ -423,11 +590,11 @@ function setupEventHandlers() {
             if (window.go && window.go.main && window.go.main.App) {
                 btnLaunchTerminal.disabled = true;
                 const originalText = btnLaunchTerminal.innerHTML;
-                btnLaunchTerminal.innerHTML = '<span class="status-dot pulse" style="background-color:white;width:6px;height:6px;margin-right:8px;"></span>启动中...';
+                btnLaunchTerminal.innerHTML = `<span class="status-dot pulse" style="background-color:white;width:6px;height:6px;margin-right:8px;"></span>${currentLang === 'zh' ? '启动中...' : 'Launching...'}`;
                 try {
                     const res = await window.go.main.App.LaunchClaudeTerminal(currentShell);
                     if (res === "success") {
-                        btnLaunchTerminal.innerHTML = '已启动终端 ✓';
+                        btnLaunchTerminal.innerHTML = currentLang === 'zh' ? '已启动终端 ✓' : 'Terminal Launched ✓';
                         btnLaunchTerminal.style.background = 'var(--green)';
                         setTimeout(() => {
                             btnLaunchTerminal.disabled = false;
@@ -438,17 +605,17 @@ function setupEventHandlers() {
                         btnLaunchTerminal.disabled = false;
                         btnLaunchTerminal.innerHTML = originalText;
                         btnLaunchTerminal.style.background = '';
-                        alert('启动失败: ' + res);
+                        alert((currentLang === 'zh' ? '启动失败: ' : 'Launch failed: ') + res);
                     }
                 } catch (err) {
                     btnLaunchTerminal.disabled = false;
                     btnLaunchTerminal.innerHTML = originalText;
                     btnLaunchTerminal.style.background = '';
                     console.error("Launch terminal error:", err);
-                    alert('启动终端发生错误: ' + err.message);
+                    alert((currentLang === 'zh' ? '启动终端发生错误: ' : 'Launch error: ') + err.message);
                 }
             } else {
-                alert('一键启动终端仅在桌面版 app 客户端可用，请在桌面端中点击使用！');
+                alert(currentLang === 'zh' ? '一键启动终端仅在桌面版 app 客户端可用，请在桌面端中点击使用！' : 'One-click launch is only available in the desktop app!');
             }
         });
     }
@@ -474,12 +641,24 @@ function setupEventHandlers() {
         });
     }
 
+    if (langToggleBtn) {
+        langToggleBtn.addEventListener('click', () => {
+            currentLang = currentLang === 'zh' ? 'en' : 'zh';
+            localStorage.setItem('lang', currentLang);
+            updateLanguageDOM();
+            loadStatus(); // refresh values with i18n
+        });
+    }
+
     // 绑定四个模型下拉框的“自定义”选择逻辑
     const handleModelSelectChange = (selectEl) => {
         if (!selectEl) return;
         selectEl.addEventListener('change', (e) => {
             if (e.target.value === 'custom') {
-                const newVal = prompt("请输入您想映射或设定的自定义模型名称 (例如: my-custom-model):");
+                const promptMsg = currentLang === 'zh' 
+                    ? "请输入您想映射或设定的自定义模型名称 (例如: my-custom-model):" 
+                    : "Please enter custom model name (e.g., my-custom-model):";
+                const newVal = prompt(promptMsg);
                 if (newVal && newVal.trim()) {
                     const value = newVal.trim();
                     let exists = false;
@@ -524,16 +703,83 @@ function setupEventHandlers() {
                     alert("无法打开文件夹: " + e.message);
                 }
             } else {
-                alert("该功能仅在桌面客户端可用。您的配置文件夹通常在您的个人用户目录下的 .ocgt 文件夹中。");
+                alert(currentLang === 'zh' 
+                    ? "该功能仅在桌面客户端可用。您的配置文件夹通常在您的个人用户目录下的 .ocgt 文件夹中。" 
+                    : "Only available in the desktop client. Config is typically under ~/.ocgt directory.");
             }
         });
+    }
+}
+
+function updateLanguageDOM() {
+    const lang = currentLang;
+    const dict = i18n[lang];
+    if (!dict) return;
+
+    // Toggle button text
+    if (langToggleBtn) {
+        langToggleBtn.querySelector('span').textContent = lang === 'zh' ? 'EN' : '中';
+    }
+
+    // Translate elements with data-i18n attribute
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.dataset.i18n;
+        if (dict[key]) {
+            if (['SPAN', 'BUTTON', 'H2', 'H3', 'H4', 'LABEL', 'P', 'TH', 'LI', 'OPTION'].includes(el.tagName)) {
+                // Safely replace only the text node inside elements containing SVGs or other HTML tags
+                const textNodes = Array.from(el.childNodes).filter(node => node.nodeType === Node.TEXT_NODE);
+                if (textNodes.length > 0) {
+                    textNodes[textNodes.length - 1].textContent = dict[key];
+                } else {
+                    el.textContent = dict[key];
+                }
+            } else {
+                el.textContent = dict[key];
+            }
+        }
+    });
+
+    // Translate placeholders
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+        const key = el.dataset.i18nPlaceholder;
+        if (dict[key]) {
+            el.setAttribute('placeholder', dict[key]);
+        }
+    });
+
+    updateActiveViewHeaders();
+}
+
+function updateActiveViewHeaders() {
+    const activeItem = document.querySelector('.nav-item.active');
+    if (!activeItem) return;
+    const viewId = activeItem.dataset.view;
+    const titleEl = document.getElementById('current-view-title');
+    const subtitleEl = document.getElementById('current-view-subtitle');
+    if (!titleEl || !subtitleEl) return;
+
+    const dict = i18n[currentLang];
+    if (viewId === 'dashboard') {
+        titleEl.textContent = dict.title_dashboard;
+        subtitleEl.textContent = dict.subtitle_dashboard;
+    } else if (viewId === 'settings') {
+        titleEl.textContent = dict.title_settings;
+        subtitleEl.textContent = dict.subtitle_settings;
+    } else if (viewId === 'terminal') {
+        titleEl.textContent = dict.title_terminal;
+        subtitleEl.textContent = dict.subtitle_terminal;
+    } else if (viewId === 'history') {
+        titleEl.textContent = dict.title_history;
+        subtitleEl.textContent = dict.subtitle_history;
     }
 }
 
 async function installClaudeUserEnv(showAlert) {
     if (!(window.go && window.go.main && window.go.main.App && window.go.main.App.InstallClaudeUserEnv)) {
         if (showAlert) {
-            alert('该功能仅桌面端可用。当前浏览器模式请复制右侧环境变量手动执行。');
+            alert(currentLang === 'zh' 
+                ? '该功能仅桌面端可用。当前浏览器模式请复制右侧环境变量手动执行。' 
+                : 'Only available in desktop app. Please copy the env variables manually on the right.');
         }
         return false;
     }
@@ -542,37 +788,40 @@ async function installClaudeUserEnv(showAlert) {
     buttons.forEach(btn => {
         btn.disabled = true;
         btn.dataset.originalText = btn.textContent;
-        btn.textContent = '修复中...';
+        btn.textContent = currentLang === 'zh' ? '修复中...' : 'Repairing...';
     });
 
     try {
         const res = await window.go.main.App.InstallClaudeUserEnv();
         if (res === 'success') {
             buttons.forEach(btn => {
-                btn.textContent = '已修复，重新打开终端生效';
+                btn.textContent = currentLang === 'zh' ? '已修复，重新打开终端生效' : 'Repaired! Reopen terminals to apply';
             });
             if (showAlert) {
-                alert('已写入 Windows 用户环境变量。请关闭旧 PowerShell，重新打开终端后再运行 claude。');
+                alert(currentLang === 'zh' 
+                    ? '已写入 Windows 用户环境变量。请关闭旧 PowerShell，重新打开终端后再运行 claude。' 
+                    : 'User environment variables successfully updated. Restart your shell and run `claude`.');
             }
             setTimeout(() => {
                 buttons.forEach(btn => {
                     btn.disabled = false;
-                    btn.textContent = btn.dataset.originalText || '一键修复 Claude Code 系统环境变量';
+                    btn.textContent = btn.dataset.originalText || (currentLang === 'zh' ? '一键修复 Claude Code 系统环境变量' : 'One-click Repair Claude Code System Env');
                 });
             }, 2200);
             return true;
         }
-        if (showAlert) alert('修复失败: ' + res);
+        if (showAlert) alert((currentLang === 'zh' ? '修复失败: ' : 'Repair failed: ') + res);
         return false;
     } catch (err) {
         console.error('InstallClaudeUserEnv failed:', err);
-        if (showAlert) alert('修复失败: ' + err.message);
+        if (showAlert) alert((currentLang === 'zh' ? '修复失败: ' : 'Repair failed: ') + err.message);
         return false;
     } finally {
-        if (!buttons.some(btn => btn.textContent === '已修复，重新打开终端生效')) {
+        const resetText = currentLang === 'zh' ? '已修复，重新打开终端生效' : 'Repaired! Reopen terminals to apply';
+        if (!buttons.some(btn => btn.textContent === resetText)) {
             buttons.forEach(btn => {
                 btn.disabled = false;
-                btn.textContent = btn.dataset.originalText || '一键修复 Claude Code 系统环境变量';
+                btn.textContent = btn.dataset.originalText || (currentLang === 'zh' ? '一键修复 Claude Code 系统环境变量' : 'One-click Repair Claude Code System Env');
             });
         }
     }
@@ -619,11 +868,11 @@ function renderCCSwitchCode() {
 }
 
 function renderHistoryTable(logs) {
-    // 动态更新流量仪表盘统计大屏
     updateTrafficStats(logs);
 
+    const dict = i18n[currentLang];
     if (!logs || logs.length === 0) {
-        tbodyHistory.innerHTML = `<tr class="empty-row"><td colspan="7"><div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>暂无流量记录。请使用一键终端或在其他 Shell 中向代理发送请求...</div></td></tr>`;
+        tbodyHistory.innerHTML = `<tr class="empty-row"><td colspan="7"><div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>${dict.traf_empty}</div></td></tr>`;
         return;
     }
     tbodyHistory.innerHTML = logs.map(log => {
@@ -700,6 +949,7 @@ function formatTime(d) {
     return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
+// Custom status badge rendering
 function statusBadge(code) {
     if (code >= 200 && code < 300) return `<span class="badge-ok">${code}</span>`;
     if (code >= 400 && code < 500) return `<span class="badge-warn">${code}</span>`;
@@ -707,28 +957,30 @@ function statusBadge(code) {
 }
 
 function setButtonState(btn, state) {
+    const dict = i18n[currentLang];
     if (state === 'saving') {
         btn.disabled = true;
-        btn.textContent = '保存中...';
+        btn.textContent = dict.status_saving;
         btn.style.opacity = '0.7';
     } else if (state === 'success') {
         btn.disabled = true;
         btn.className = 'btn-primary btn-success';
-        btn.textContent = '已保存';
+        btn.textContent = dict.status_success;
         btn.style.opacity = '1';
     } else {
         btn.disabled = false;
         btn.className = 'btn-primary';
-        btn.textContent = '保存并热重载配置';
+        btn.textContent = dict.btn_save_config;
         btn.style.opacity = '1';
     }
 }
 
 function copyText(text, btn) {
+    const dict = i18n[currentLang];
     const doCopy = () => {
         const span = btn.querySelector('span');
         const orig = span.textContent;
-        span.textContent = '已复制';
+        span.textContent = dict.btn_copied;
         btn.style.borderColor = 'var(--green-border)';
         btn.style.color = 'var(--green)';
         setTimeout(() => {

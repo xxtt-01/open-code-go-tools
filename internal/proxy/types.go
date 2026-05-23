@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -39,6 +40,11 @@ type Server struct {
 
 	historyMu sync.RWMutex
 	history   []requestLogEntry
+
+	// Circuit breaker state
+	circuitMu           sync.Mutex
+	consecutiveFailures map[string]int
+	trippedUntil        map[string]time.Time
 }
 
 func (s *Server) SetConfigPath(path string) {
@@ -174,10 +180,12 @@ func New(cfg config.Config) (*Server, error) {
 		ResponseHeaderTimeout: 60 * time.Second,
 	}
 	return &Server{
-		config:          cfg,
-		upstream:        cfg.Upstream,
-		client:          &http.Client{Timeout: cfg.RequestTimeout(), Transport: transport},
-		reasoningByTool: map[string]string{},
+		config:              cfg,
+		upstream:            cfg.Upstream,
+		client:              &http.Client{Timeout: cfg.RequestTimeout(), Transport: transport},
+		reasoningByTool:     map[string]string{},
+		consecutiveFailures: map[string]int{},
+		trippedUntil:        map[string]time.Time{},
 	}, nil
 }
 
@@ -201,4 +209,37 @@ func (s *Server) ListenAddress() string {
 	s.configMu.RLock()
 	defer s.configMu.RUnlock()
 	return s.config.Listen
+}
+
+func (s *Server) recordModelSuccess(model string) {
+	s.circuitMu.Lock()
+	defer s.circuitMu.Unlock()
+	s.consecutiveFailures[model] = 0
+	delete(s.trippedUntil, model)
+}
+
+func (s *Server) recordModelFailure(model string) {
+	s.circuitMu.Lock()
+	defer s.circuitMu.Unlock()
+	s.consecutiveFailures[model]++
+	if s.consecutiveFailures[model] >= 3 {
+		s.trippedUntil[model] = time.Now().Add(30 * time.Second)
+		log.Printf("[CircuitBreaker] Model %q has failed consecutively %d times. Tripped for 30 seconds.", model, s.consecutiveFailures[model])
+	}
+}
+
+func (s *Server) isModelCircuitTripped(model string) bool {
+	s.circuitMu.Lock()
+	defer s.circuitMu.Unlock()
+	until, ok := s.trippedUntil[model]
+	if !ok {
+		return false
+	}
+	if time.Now().After(until) {
+		// Cooldown period expired, reset failure counter and untrip
+		s.consecutiveFailures[model] = 0
+		delete(s.trippedUntil, model)
+		return false
+	}
+	return true
 }

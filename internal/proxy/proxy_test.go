@@ -1223,3 +1223,115 @@ func TestAnthropicBetaHeaderForwarding(t *testing.T) {
 		t.Fatalf("Anthropic-Beta header = %q, want prompt-caching-2024-07-31", sawBeta)
 	}
 }
+
+// ----- Fallback Chain and Circuit Breaker tests -----
+
+func TestFallbackChain(t *testing.T) {
+	var modelsCalled []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req openAIRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		modelsCalled = append(modelsCalled, req.Model)
+
+		if req.Model == "failed-model" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":{"type":"server_error","message":"failed-model is down"}}`))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl_1","model":"fallback-model","choices":[{"message":{"content":"fallback success"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`))
+	}))
+	defer upstream.Close()
+
+	srv, err := New(config.Config{
+		Listen:        "127.0.0.1:0",
+		Upstream:      upstream.URL,
+		ActiveProfile: "test",
+		Profiles: map[string]config.Profile{
+			"test": {
+				APIKey:        "test-key",
+				DefaultModel:  "failed-model",
+				FallbackChain: []string{"fallback-model"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := []byte(`{"model":"failed-model","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	contentList, _ := result["content"].([]any)
+	if len(contentList) == 0 {
+		t.Fatalf("empty content in response: %v", result)
+	}
+	textMap, _ := contentList[0].(map[string]any)
+	if textMap["text"] != "fallback success" {
+		t.Fatalf("expected 'fallback success', got %q", textMap["text"])
+	}
+
+	if len(modelsCalled) != 2 {
+		t.Fatalf("expected 2 models called, got %v", modelsCalled)
+	}
+	if modelsCalled[0] != "failed-model" || modelsCalled[1] != "fallback-model" {
+		t.Fatalf("unexpected call sequence: %v", modelsCalled)
+	}
+}
+
+func TestCircuitBreaker(t *testing.T) {
+	srv, err := New(config.Config{
+		Listen:        "127.0.0.1:0",
+		Upstream:      "https://opencode.ai/zen/go",
+		ActiveProfile: "test",
+		Profiles: map[string]config.Profile{
+			"test": {APIKey: "test-key", DefaultModel: "test-model"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	model := "troubled-model"
+	if srv.isModelCircuitTripped(model) {
+		t.Fatalf("circuit should not be tripped initially")
+	}
+
+	// 1st failure
+	srv.recordModelFailure(model)
+	if srv.isModelCircuitTripped(model) {
+		t.Fatalf("circuit should not be tripped after 1 failure")
+	}
+
+	// 2nd failure
+	srv.recordModelFailure(model)
+	if srv.isModelCircuitTripped(model) {
+		t.Fatalf("circuit should not be tripped after 2 failures")
+	}
+
+	// 3rd failure - should trip
+	srv.recordModelFailure(model)
+	if !srv.isModelCircuitTripped(model) {
+		t.Fatalf("circuit should be tripped after 3 failures")
+	}
+
+	// record success - should untrip immediately
+	srv.recordModelSuccess(model)
+	if srv.isModelCircuitTripped(model) {
+		t.Fatalf("circuit should be untripped after recording success")
+	}
+}

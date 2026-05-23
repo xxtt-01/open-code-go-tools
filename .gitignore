@@ -10,3 +10,4 @@ vendor/
 ocgt-launch.log
 
 .alma-snapshots
+.claude/
