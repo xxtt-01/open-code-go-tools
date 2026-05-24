@@ -23,7 +23,12 @@ func anthropicToOpenAI(in anthropicRequest) openAIRequest {
 	for _, msg := range in.Messages {
 		out.Messages = append(out.Messages, anthropicMessageToOpenAI(msg)...)
 	}
+	allowedToolNames := map[string]bool{}
 	for _, tool := range in.Tools {
+		if !isConvertibleClientTool(tool) {
+			continue
+		}
+		allowedToolNames[tool.Name] = true
 		out.Tools = append(out.Tools, openAITool{
 			Type: "function",
 			Function: openAIFunction{
@@ -33,7 +38,7 @@ func anthropicToOpenAI(in anthropicRequest) openAIRequest {
 			},
 		})
 	}
-	out.ToolChoice = convertToolChoice(in.ToolChoice)
+	out.ToolChoice = convertToolChoice(in.ToolChoice, allowedToolNames)
 	return out
 }
 
@@ -44,9 +49,20 @@ func anthropicMessageToOpenAI(msg anthropicMsg) []openAIMessage {
 	}
 	var messages []openAIMessage
 	var textParts []string
+	var contentParts []map[string]any
 	var toolCalls []toolCall
 	var thinkingBlocks []string
-	var imageParts []openAIMessage
+	hasImage := false
+	flushUserContent := func() {
+		if hasImage {
+			messages = append(messages, openAIMessage{Role: "user", Content: contentParts})
+		} else if len(textParts) > 0 {
+			messages = append(messages, openAIMessage{Role: "user", Content: strings.Join(textParts, "\n")})
+		}
+		textParts = nil
+		contentParts = nil
+		hasImage = false
+	}
 	for _, block := range blocks {
 		m, ok := block.(map[string]any)
 		if !ok {
@@ -56,6 +72,7 @@ func anthropicMessageToOpenAI(msg anthropicMsg) []openAIMessage {
 		case "text":
 			if text, _ := m["text"].(string); text != "" {
 				textParts = append(textParts, text)
+				contentParts = append(contentParts, map[string]any{"type": "text", "text": text})
 			}
 		case "tool_use":
 			id, _ := m["id"].(string)
@@ -66,17 +83,10 @@ func anthropicMessageToOpenAI(msg anthropicMsg) []openAIMessage {
 			call.Function.Arguments = string(args)
 			toolCalls = append(toolCalls, call)
 		case "tool_result":
-			if len(textParts) > 0 {
-				messages = append(messages, openAIMessage{Role: "user", Content: strings.Join(textParts, "\n")})
-				textParts = nil
-			}
+			flushUserContent()
 			if len(thinkingBlocks) > 0 {
 				messages = append(messages, openAIMessage{Role: "assistant", ReasoningContent: strings.Join(thinkingBlocks, "\n")})
 				thinkingBlocks = nil
-			}
-			if len(imageParts) > 0 {
-				messages = append(messages, imageParts...)
-				imageParts = nil
 			}
 			id, _ := m["tool_use_id"].(string)
 			messages = append(messages, openAIMessage{Role: "tool", ToolCallID: id, Content: blocksToText(m["content"])})
@@ -92,22 +102,18 @@ func anthropicMessageToOpenAI(msg anthropicMsg) []openAIMessage {
 					mediaType, _ := source["media_type"].(string)
 					data, _ := source["data"].(string)
 					if mediaType != "" && data != "" {
-						imageParts = append(imageParts, openAIMessage{
-							Role:    normalizeRole(msg.Role),
-							Content: fmt.Sprintf("![image](data:%s;base64,%s)", mediaType, data),
-						})
+						hasImage = true
+						contentParts = append(contentParts, openAIImageURLPart("data:"+mediaType+";base64,"+data))
 					}
 				case "url":
 					url, _ := source["url"].(string)
 					if url != "" {
-						imageParts = append(imageParts, openAIMessage{
-							Role:    normalizeRole(msg.Role),
-							Content: fmt.Sprintf("![image](%s)", url),
-						})
+						hasImage = true
+						contentParts = append(contentParts, openAIImageURLPart(url))
 					}
 				}
 			}
-			if len(imageParts) == 0 {
+			if !hasImage {
 				textParts = append(textParts, "[image]")
 			}
 		}
@@ -124,16 +130,23 @@ func anthropicMessageToOpenAI(msg anthropicMsg) []openAIMessage {
 		messages = append(messages, openAIMessage{Role: normalizeRole(msg.Role), Content: content, ReasoningContent: reasoning})
 		return messages
 	}
-	if len(imageParts) > 0 {
-		for _, ip := range imageParts {
-			messages = append(messages, ip)
-		}
+	if hasImage {
+		messages = append(messages, openAIMessage{Role: normalizeRole(msg.Role), Content: contentParts})
 		return messages
 	}
 	if len(textParts) > 0 {
 		messages = append(messages, openAIMessage{Role: normalizeRole(msg.Role), Content: strings.Join(textParts, "\n")})
 	}
 	return messages
+}
+
+func openAIImageURLPart(url string) map[string]any {
+	return map[string]any{
+		"type": "image_url",
+		"image_url": map[string]any{
+			"url": url,
+		},
+	}
 }
 
 func openAIToAnthropic(in openAIResponse, model string) map[string]any {
@@ -215,7 +228,20 @@ func normalizeRole(role string) string {
 	return "user"
 }
 
-func convertToolChoice(choice any) any {
+func isConvertibleClientTool(tool anthropicTool) bool {
+	if tool.Name == "" || tool.InputSchema == nil {
+		return false
+	}
+	if tool.Type != "" && tool.Type != "custom" && tool.Type != "function" {
+		return false
+	}
+	return true
+}
+
+func convertToolChoice(choice any, allowedToolNames map[string]bool) any {
+	if len(allowedToolNames) == 0 {
+		return nil
+	}
 	m, ok := choice.(map[string]any)
 	if !ok {
 		return nil
@@ -227,6 +253,9 @@ func convertToolChoice(choice any) any {
 		return "required"
 	case "tool":
 		name, _ := m["name"].(string)
+		if !allowedToolNames[name] {
+			return nil
+		}
 		return map[string]any{"type": "function", "function": map[string]string{"name": name}}
 	default:
 		return nil
@@ -342,6 +371,53 @@ func boundedThinkingPayload(thinking any, maxBudgetTokens int) any {
 	}
 }
 
+func chatCompletionThinkingControls(model string, thinking any, maxBudgetTokens int) (any, string) {
+	if !supportsDeepSeekV4ThinkingRequest(model) {
+		return nil, ""
+	}
+	if isThinkingDisabled(thinking) || maxBudgetTokens < 0 {
+		return map[string]any{"type": "disabled"}, ""
+	}
+	if thinking == nil {
+		return nil, ""
+	}
+	return map[string]any{"type": "enabled"}, deepSeekReasoningEffort(thinking, maxBudgetTokens)
+}
+
+func isThinkingDisabled(thinking any) bool {
+	switch v := thinking.(type) {
+	case bool:
+		return !v
+	case string:
+		return strings.EqualFold(v, "disabled") || strings.EqualFold(v, "false") || strings.EqualFold(v, "off")
+	case map[string]any:
+		typ, _ := v["type"].(string)
+		return strings.EqualFold(typ, "disabled")
+	default:
+		return false
+	}
+}
+
+func deepSeekReasoningEffort(thinking any, maxBudgetTokens int) string {
+	budget := thinkingBudgetValue(thinking)
+	if budget <= 0 {
+		budget = maxBudgetTokens
+	}
+	if budget >= 1024 {
+		return "max"
+	}
+	return "high"
+}
+
+func thinkingBudgetValue(thinking any) int {
+	switch v := thinking.(type) {
+	case map[string]any:
+		return intFromJSONNumber(v["budget_tokens"])
+	default:
+		return 0
+	}
+}
+
 func clampThinkingBudget(value any, maxBudgetTokens int) int {
 	budget := intFromJSONNumber(value)
 	if budget <= 0 || budget > maxBudgetTokens {
@@ -374,13 +450,141 @@ func singleJoin(base, path string) string {
 	return base + "/" + strings.TrimLeft(path, "/")
 }
 
-func isDeepSeekThinkingModel(model string) bool {
+// Model capability detection.
+// Uses prefix matching to avoid false positives from substring matches.
+// These are conservative heuristics — exact capabilities are defined by the upstream.
+
+func supportsDeepSeekV4ThinkingRequest(model string) bool {
+	return isDeepSeekModel(model)
+}
+
+func supportsAnthropicThinkingRequest(model string) bool {
 	lower := strings.ToLower(model)
-	return strings.Contains(lower, "deepseek-v4") ||
-		strings.Contains(lower, "deepseek-r1") ||
-		strings.Contains(lower, "deepseek-reasoner") ||
-		strings.Contains(lower, "ds-r1") ||
-		strings.HasSuffix(lower, "/r1") ||
-		strings.Contains(lower, "r1-") ||
+	return modelPrefixMatch(lower, []string{
+		"claude-3-7",
+		"claude-sonnet-4",
+		"claude-opus-4",
+		"claude-4",
+	})
+}
+
+func supportsReasoningContentReplay(model string) bool {
+	return isDeepSeekModel(model)
+}
+
+func isDeepSeekModel(model string) bool {
+	lower := strings.ToLower(model)
+	return modelPrefixMatch(lower, []string{
+		"deepseek-v4",
+		"deepseek-r1",
+		"deepseek-reasoner",
+		"ds-r1",
+	}) || strings.HasSuffix(lower, "/r1") ||
+		strings.HasSuffix(lower, "-r1") ||
 		strings.Contains(lower, "reasoning")
+}
+
+// supportsVisionInput returns true if the model is known to support image/multimodal inputs.
+func supportsVisionInput(model string) bool {
+	lower := strings.ToLower(model)
+	return strings.HasPrefix(lower, "kimi") ||
+		strings.HasPrefix(lower, "glm") ||
+		strings.HasPrefix(lower, "qwen") ||
+		strings.HasPrefix(lower, "minimax") ||
+		strings.HasPrefix(lower, "mimo") ||
+		strings.HasPrefix(lower, "hy") ||
+		strings.HasPrefix(lower, "hunyuan") ||
+		strings.HasPrefix(lower, "claude") ||
+		strings.HasPrefix(lower, "gemini") ||
+		strings.HasPrefix(lower, "gpt") ||
+		strings.HasPrefix(lower, "grok") ||
+		strings.Contains(lower, "vision") ||
+		strings.Contains(lower, "vl") ||
+		strings.Contains(lower, "pro") // conservative: many "pro" models have vision
+}
+
+// sanitizeContentBlocksForNonVision replaces image blocks with text placeholders
+// when the target model doesn't support vision. Returns true if any blocks were modified.
+func sanitizeContentBlocksForNonVision(messages []anthropicMsg) bool {
+	modified := false
+	for i := range messages {
+		blocks, ok := messages[i].Content.([]interface{})
+		if !ok {
+			continue
+		}
+		filtered := make([]interface{}, 0, len(blocks))
+		for _, block := range blocks {
+			m, ok := block.(map[string]interface{})
+			if !ok {
+				filtered = append(filtered, block)
+				continue
+			}
+			blockType, _ := m["type"].(string)
+			if blockType == "image" {
+				// Replace image with a text placeholder
+				filtered = append(filtered, map[string]interface{}{
+					"type": "text",
+					"text": "[image]",
+				})
+				modified = true
+			} else if blockType == "tool_result" {
+				// Also check tool_result content for images
+				content, ok := m["content"].([]interface{})
+				if ok {
+					cleanContent := sanitizeContentList(content)
+					if cleanContent != nil {
+						m["content"] = cleanContent
+						modified = true
+					}
+				}
+				filtered = append(filtered, block)
+			} else {
+				filtered = append(filtered, block)
+			}
+		}
+		messages[i].Content = filtered
+	}
+	return modified
+}
+
+func sanitizeContentList(blocks []interface{}) []interface{} {
+	needsClean := false
+	for _, b := range blocks {
+		m, ok := b.(map[string]interface{})
+		if ok && m["type"] == "image" {
+			needsClean = true
+			break
+		}
+	}
+	if !needsClean {
+		return nil
+	}
+	filtered := make([]interface{}, 0, len(blocks))
+	for _, b := range blocks {
+		m, ok := b.(map[string]interface{})
+		if ok && m["type"] == "image" {
+			filtered = append(filtered, map[string]interface{}{
+				"type": "text",
+				"text": "[image]",
+			})
+		} else {
+			filtered = append(filtered, b)
+		}
+	}
+	return filtered
+}
+
+// modelPrefixMatch checks if model starts with any of the given prefixes.
+// Prevents false positives from substring matching (e.g. "nouveau-3-7" not matching "claude-3-7").
+func modelPrefixMatch(lowerModel string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(lowerModel, p) {
+			// Only match at word boundaries to avoid substring false positives
+			rest := lowerModel[len(p):]
+			if rest == "" || rest[0] == '-' || rest[0] == '.' || rest[0] == '/' || rest[0] == '@' || rest[0] == ':' {
+				return true
+			}
+		}
+	}
+	return false
 }

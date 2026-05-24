@@ -787,6 +787,62 @@ func TestAnthropicToOpenAI(t *testing.T) {
 	}
 }
 
+func TestAnthropicToOpenAIConvertsImagesToVisionParts(t *testing.T) {
+	req := anthropicRequest{
+		Model: "kimi-k2.6",
+		Messages: []anthropicMsg{{
+			Role: "user",
+			Content: []any{
+				map[string]any{"type": "text", "text": "describe this"},
+				map[string]any{
+					"type": "image",
+					"source": map[string]any{
+						"type":       "base64",
+						"media_type": "image/png",
+						"data":       "aW1hZ2U=",
+					},
+				},
+			},
+		}},
+	}
+	out := anthropicToOpenAI(req)
+	if len(out.Messages) != 1 {
+		t.Fatalf("messages = %#v", out.Messages)
+	}
+	parts, ok := out.Messages[0].Content.([]map[string]any)
+	if !ok {
+		t.Fatalf("content type = %T, want []map[string]any", out.Messages[0].Content)
+	}
+	if len(parts) != 2 || parts[0]["type"] != "text" || parts[1]["type"] != "image_url" {
+		t.Fatalf("parts = %#v", parts)
+	}
+	imageURL, _ := parts[1]["image_url"].(map[string]any)
+	if imageURL["url"] != "data:image/png;base64,aW1hZ2U=" {
+		t.Fatalf("image_url = %#v", imageURL)
+	}
+}
+
+func TestAnthropicServerToolsAreNotConvertedToBrokenOpenAIFunctions(t *testing.T) {
+	req := anthropicRequest{
+		Model: "kimi-k2.6",
+		Messages: []anthropicMsg{
+			{Role: "user", Content: "search"},
+		},
+		Tools: []anthropicTool{{
+			Type: "web_search_20250305",
+			Name: "web_search",
+		}},
+		ToolChoice: map[string]any{"type": "tool", "name": "web_search"},
+	}
+	out := anthropicToOpenAI(req)
+	if len(out.Tools) != 0 {
+		t.Fatalf("server-side web search tool should not be converted to OpenAI function tools: %#v", out.Tools)
+	}
+	if out.ToolChoice != nil {
+		t.Fatalf("tool choice for skipped server-side tool should be dropped: %#v", out.ToolChoice)
+	}
+}
+
 func TestAnthropicThinkingIsBoundedForOpenAIChatCompletions(t *testing.T) {
 	req := anthropicRequest{
 		Model:     "deepseek-v4-pro",
@@ -814,14 +870,16 @@ func TestAnthropicThinkingCanBeDisabledForOpenAIChatCompletions(t *testing.T) {
 	}
 }
 
-func TestMessagesEndpointForwardsBoundedThinking(t *testing.T) {
+func TestDeepSeekV4ChatCompletionsUseProviderThinkingSchema(t *testing.T) {
 	var sawThinking map[string]any
+	var sawReasoningEffort string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req openAIRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
 		sawThinking, _ = req.Thinking.(map[string]any)
+		sawReasoningEffort = req.ReasoningEffort
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"chatcmpl_1","model":"deepseek-v4-pro","choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`))
 	}))
@@ -849,8 +907,117 @@ func TestMessagesEndpointForwardsBoundedThinking(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
 	}
-	if sawThinking["type"] != "enabled" || intFromJSONNumber(sawThinking["budget_tokens"]) != 256 {
+	if sawThinking["type"] != "enabled" {
 		t.Fatalf("unexpected thinking payload: %#v", sawThinking)
+	}
+	if _, ok := sawThinking["budget_tokens"]; ok {
+		t.Fatalf("DeepSeek thinking payload must not include Anthropic budget_tokens: %#v", sawThinking)
+	}
+	if sawReasoningEffort != "max" {
+		t.Fatalf("reasoning_effort = %q, want max", sawReasoningEffort)
+	}
+}
+
+func TestDefaultChatCompletionsModelsDoNotForwardUnsupportedThinking(t *testing.T) {
+	unsupportedModels := []string{
+		"kimi-k2.6",
+		"kimi-k2.5",
+		"qwen3.6-plus",
+		"qwen3.5-plus",
+		"glm-5.1",
+		"glm-5",
+		"hy3-preview",
+		"mimo-v2.5-pro",
+		"mimo-v2.5",
+	}
+	for _, model := range unsupportedModels {
+		t.Run(model, func(t *testing.T) {
+			var sawThinking any
+			var sawReasoningEffort string
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var req openAIRequest
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Fatal(err)
+				}
+				if req.Model != model {
+					t.Fatalf("model = %q, want %q", req.Model, model)
+				}
+				sawThinking = req.Thinking
+				sawReasoningEffort = req.ReasoningEffort
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(fmt.Sprintf(`{"id":"chatcmpl_1","model":%q,"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`, model)))
+			}))
+			defer upstream.Close()
+
+			srv, err := New(config.Config{
+				Listen:                  "127.0.0.1:0",
+				Upstream:                upstream.URL,
+				MaxThinkingBudgetTokens: 256,
+				ActiveProfile:           "test",
+				Profiles: map[string]config.Profile{
+					"test": {APIKey: "test-key", DefaultModel: model},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			body := []byte(fmt.Sprintf(`{"model":%q,"max_tokens":16,"thinking":{"type":"enabled","budget_tokens":8192},"messages":[{"role":"user","content":"think"}]}`, model))
+			req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+			}
+			if sawThinking != nil {
+				t.Fatalf("unsupported model should not receive thinking payload: %#v", sawThinking)
+			}
+			if sawReasoningEffort != "" {
+				t.Fatalf("unsupported model should not receive reasoning_effort: %q", sawReasoningEffort)
+			}
+		})
+	}
+}
+
+func TestMessagesEndpointStripsThinkingForUnsupportedModels(t *testing.T) {
+	var sawThinking any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		sawThinking = req["thinking"]
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","model":"minimax-m2.7","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer upstream.Close()
+
+	srv, err := New(config.Config{
+		Listen:                  "127.0.0.1:0",
+		Upstream:                upstream.URL,
+		MaxThinkingBudgetTokens: 256,
+		ActiveProfile:           "test",
+		Profiles: map[string]config.Profile{
+			"test": {APIKey: "test-key", DefaultModel: "minimax-m2.7", MessageModels: []string{"minimax-m2.7"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := []byte(`{"model":"minimax-m2.7","max_tokens":16,"thinking":{"type":"enabled","budget_tokens":8192},"messages":[{"role":"user","content":"think"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	if sawThinking != nil {
+		t.Fatalf("unsupported model should not receive thinking payload: %#v", sawThinking)
 	}
 }
 
@@ -929,8 +1096,19 @@ func TestConfiguredModelsIncludesRoutes(t *testing.T) {
 		MessageModels: []string{"minimax-m2.7"},
 	}
 	out := configuredModels(profile)
-	if len(out["data"].([]map[string]any)) != 2 {
+	models := out["data"].([]map[string]any)
+	if len(models) != 5 {
 		t.Fatalf("configured model count = %#v", out)
+	}
+	ids := map[string]bool{}
+	for _, model := range models {
+		id, _ := model["id"].(string)
+		ids[id] = true
+	}
+	for _, want := range []string{"claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-7", "kimi", "minimax-m2.7"} {
+		if !ids[want] {
+			t.Fatalf("configured models missing %q: %#v", want, out)
+		}
 	}
 }
 

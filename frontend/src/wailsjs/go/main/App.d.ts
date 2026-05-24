@@ -3,10 +3,22 @@
 
 export function GetListenAddress():Promise<string>;
 
+export function GetLocalToken():Promise<string>;
+
+export function GetPreferences():Promise<Record<string, string>>;
+
+export function HideToTray():Promise<void>;
+
 export function InstallClaudeUserEnv():Promise<string>;
 
-export function LaunchClaudeTerminal(arg1:string):Promise<string>;
+export function LaunchClaudeTerminal(arg1:string,arg2:string):Promise<string>;
 
 export function OpenConfigLocation():Promise<string>;
 
+export function QuitApp():Promise<void>;
+
+export function SavePreferences(arg1:string):Promise<string>;
+
 export function SaveProfileConfig(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string,arg8:string):Promise<string>;
+
+export function ShowAboutDialog():Promise<void>;

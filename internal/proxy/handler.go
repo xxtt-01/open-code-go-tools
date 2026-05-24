@@ -3,6 +3,8 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +18,15 @@ import (
 
 	"github.com/ethan-blue/open-code-go-tools/internal/config"
 )
+
+// LocalToken returns the active auth token, whether configured or auto-generated.
+// Used by the Wails frontend to authenticate API requests.
+func (s *Server) LocalToken() string {
+	if s.config.LocalAuthToken != "" {
+		return s.config.LocalAuthToken
+	}
+	return s.autoAuthToken
+}
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -36,11 +47,18 @@ func (s *Server) Handler() http.Handler {
 
 	// Apply middlewares in order: rate limit -> auth -> logging
 	handler := requestLogger(mux)
-	if s.config.LocalAuthToken != "" {
-		handler = authMiddleware(s.config.LocalAuthToken, handler)
+
+	// Enforce auth — use configured token, or auto-generated one from ListenAndServe
+	token := s.config.LocalAuthToken
+	if token == "" {
+		token = s.autoAuthToken
 	}
-	// Apply rate limiting: 100 requests per second per IP, burst of 200
-	rl := newRateLimiter(100, 200)
+	if token != "" {
+		handler = authMiddleware(token, handler)
+	}
+	// Apply rate limiting using config values (defaults: 100 req/s, burst 200)
+	ratePerSec, rateBurst := s.config.RateLimit()
+	rl := newRateLimiter(ratePerSec, rateBurst)
 	handler = rateLimitMiddleware(rl, handler)
 
 	return handler
@@ -53,14 +71,41 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		ReadHeaderTimeout: 15 * time.Second,
 	}
 
+	// Ensure auth token is generated for production use
+	if s.config.LocalAuthToken == "" && s.autoAuthToken == "" {
+		s.autoAuthOnce.Do(func() {
+			buf := make([]byte, 24)
+			if _, err := rand.Read(buf); err != nil {
+				log.Printf("ocgt: failed to generate auth token: %v", err)
+				buf = []byte(fmt.Sprintf("%d", time.Now().UnixNano()))
+			}
+			s.autoAuthToken = hex.EncodeToString(buf)
+			log.Printf("ocgt: auto-generated auth token (set local_auth_token in config to customize)")
+		})
+	}
+
 	// Start configuration hot-reloading watcher
 	go s.watchConfig(ctx)
 
 	go func() {
 		<-ctx.Done()
-		log.Println("shutting down...")
+		log.Println("shutting down, waiting for in-flight streaming requests...")
+
+		done := make(chan struct{})
+		go func() {
+			s.wg.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+			log.Println("all in-flight streaming requests completed")
+		case <-time.After(30 * time.Second):
+			log.Println("timed out waiting for in-flight streaming requests")
+		}
+
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		log.Println("calling server.Shutdown...")
 		_ = server.Shutdown(shutdownCtx)
 	}()
 	log.Printf("ocgt OpenCode Go proxy listening on http://%s -> %s", s.config.Listen, s.config.Upstream)
@@ -82,7 +127,7 @@ func (s *Server) watchConfig(ctx context.Context) {
 		lastModTime = info.ModTime()
 	}
 
-	ticker := time.NewTicker(2500 * time.Millisecond)
+	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -98,11 +143,13 @@ func (s *Server) watchConfig(ctx context.Context) {
 				lastModTime = info.ModTime()
 				cfg, err := config.Load(s.configPath)
 				if err != nil {
-					log.Printf("[HotReload] Failed to load config changes: %v", err)
-					continue
+					log.Printf("ocgt: config reload error: %v", err)
+				} else {
+					s.configMu.Lock()
+					s.config = cfg
+					s.configMu.Unlock()
+					log.Printf("ocgt: config hot-reloaded from %s", s.configPath)
 				}
-				s.ApplyConfig(cfg)
-				log.Printf("[HotReload] Configuration reloaded successfully from %s", s.configPath)
 			}
 		}
 	}
@@ -166,6 +213,10 @@ func (s *Server) countTokens(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if strings.TrimSpace(payload.Model) == "" {
+		writeError(w, http.StatusBadRequest, errors.New("model is required"))
+		return
+	}
 	payload.Model = profile.ResolveModel(payload.Model)
 	if profile.UsesMessagesEndpoint(payload.Model) {
 		var raw map[string]any
@@ -225,6 +276,19 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	// Validate required fields before forwarding
+	if strings.TrimSpace(payload.Model) == "" {
+		writeError(w, http.StatusBadRequest, errors.New("model is required"))
+		return
+	}
+	if len(payload.Messages) == 0 {
+		writeError(w, http.StatusBadRequest, errors.New("messages must contain at least one message"))
+		return
+	}
+	if payload.MaxTokens < 0 {
+		writeError(w, http.StatusBadRequest, errors.New("max_tokens must be a non-negative integer"))
+		return
+	}
 	payload.Model = profile.ResolveModel(payload.Model)
 	if profile.UsesMessagesEndpoint(payload.Model) {
 		s.forwardAnthropicMessages(w, r, profile, payload, data)
@@ -233,12 +297,11 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 	s.forwardChatCompletions(w, r, profile, payload)
 }
 
-func (s *Server) forwardAnthropicMessages(w http.ResponseWriter, r *http.Request, profile config.Profile, payload anthropicRequest, original []byte) {
-	// Construct candidate models to try: PrimaryModel, followed by FallbackChain
-	candidates := []string{payload.Model}
+func (s *Server) buildCandidateModels(payloadModel string, profile config.Profile) []string {
+	candidates := []string{payloadModel}
 	for _, fallback := range profile.FallbackChain {
 		resolved := profile.ResolveModel(fallback)
-		if resolved != "" && resolved != payload.Model {
+		if resolved != "" && resolved != payloadModel {
 			duplicate := false
 			for _, c := range candidates {
 				if c == resolved {
@@ -251,6 +314,16 @@ func (s *Server) forwardAnthropicMessages(w http.ResponseWriter, r *http.Request
 			}
 		}
 	}
+	return candidates
+}
+
+func (s *Server) forwardAnthropicMessages(w http.ResponseWriter, r *http.Request, profile config.Profile, payload anthropicRequest, original []byte) {
+	// Track in-flight streaming requests for graceful shutdown.
+	// This handler is used for all Anthropic Messages API calls, including streaming.
+	s.wg.Add(1)
+	defer s.wg.Done()
+
+	candidates := s.buildCandidateModels(payload.Model, profile)
 
 	var lastErr error
 	var lastStatus int
@@ -269,6 +342,32 @@ func (s *Server) forwardAnthropicMessages(w http.ResponseWriter, r *http.Request
 			return
 		}
 		raw["model"] = candidate
+
+		// Sanitize image content for non-vision models to prevent upstream errors
+		// (e.g. "unknown variant image_url, expected text" from DeepSeek).
+		if !supportsVisionInput(candidate) {
+			if msgs, ok := raw["messages"].([]interface{}); ok {
+				data, _ := json.Marshal(msgs)
+				var anthropicMsgs []anthropicMsg
+				json.Unmarshal(data, &anthropicMsgs)
+				if sanitizeContentBlocksForNonVision(anthropicMsgs) {
+					raw["messages"] = anthropicMsgs
+				}
+			}
+		}
+
+		if thinking, ok := raw["thinking"]; ok {
+			if !supportsAnthropicThinkingRequest(candidate) {
+				delete(raw, "thinking")
+			} else {
+				bounded := boundedThinkingPayload(thinking, s.thinkingBudgetTokens())
+				if bounded == nil {
+					delete(raw, "thinking")
+				} else {
+					raw["thinking"] = bounded
+				}
+			}
+		}
 		body, err := json.Marshal(raw)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)
@@ -303,11 +402,11 @@ func (s *Server) forwardAnthropicMessages(w http.ResponseWriter, r *http.Request
 			continue
 		}
 
-		defer resp.Body.Close()
 		log.Printf("upstream route=messages model=%s status=%d", candidate, resp.StatusCode)
 
 		if resp.StatusCode >= 400 {
 			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, MaxBodySize))
+			resp.Body.Close()
 			errText := upstreamErrorSummary(resp.StatusCode, respBody)
 
 			// Record failure in Circuit Breaker
@@ -334,6 +433,7 @@ func (s *Server) forwardAnthropicMessages(w http.ResponseWriter, r *http.Request
 		stripHopByHopHeaders(w.Header())
 		w.WriteHeader(resp.StatusCode)
 		_, _ = copyResponse(w, resp.Body)
+		resp.Body.Close()
 		s.addHistoryEntry(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "messages")
 		return
 	}
@@ -351,23 +451,12 @@ func (s *Server) forwardAnthropicMessages(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) forwardChatCompletions(w http.ResponseWriter, r *http.Request, profile config.Profile, payload anthropicRequest) {
-	// Construct candidate models to try: PrimaryModel, followed by FallbackChain
-	candidates := []string{payload.Model}
-	for _, fallback := range profile.FallbackChain {
-		resolved := profile.ResolveModel(fallback)
-		if resolved != "" && resolved != payload.Model {
-			duplicate := false
-			for _, c := range candidates {
-				if c == resolved {
-					duplicate = true
-					break
-				}
-			}
-			if !duplicate {
-				candidates = append(candidates, resolved)
-			}
-		}
-	}
+	// Track in-flight streaming requests for graceful shutdown.
+	// This handler is used for all OpenAI-compatible Chat Completions calls, including streaming.
+	s.wg.Add(1)
+	defer s.wg.Done()
+
+	candidates := s.buildCandidateModels(payload.Model, profile)
 
 	var lastErr error
 	var lastStatus int
@@ -380,10 +469,18 @@ func (s *Server) forwardChatCompletions(w http.ResponseWriter, r *http.Request, 
 			continue
 		}
 
+		// Sanitize image content for non-vision models to prevent upstream errors
+		// (e.g. "unknown variant image_url, expected text" from DeepSeek).
+		if !supportsVisionInput(candidate) {
+			sanitizeContentBlocksForNonVision(payload.Messages)
+		}
+
 		chatReq := anthropicToOpenAI(payload)
 		chatReq.Model = candidate
-		chatReq.Thinking = boundedThinkingPayload(payload.Thinking, s.thinkingBudgetTokens())
-		s.attachReasoningContent(chatReq.Messages)
+		chatReq.Thinking, chatReq.ReasoningEffort = chatCompletionThinkingControls(candidate, payload.Thinking, s.thinkingBudgetTokens())
+		if supportsReasoningContentReplay(candidate) {
+			s.attachReasoningContent(chatReq.Messages)
+		}
 		body, err := json.Marshal(chatReq)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)
@@ -412,11 +509,11 @@ func (s *Server) forwardChatCompletions(w http.ResponseWriter, r *http.Request, 
 			continue
 		}
 
-		defer resp.Body.Close()
 		log.Printf("upstream route=chat/completions model=%s status=%d", candidate, resp.StatusCode)
 
 		if resp.StatusCode >= 400 {
 			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, MaxBodySize))
+			resp.Body.Close()
 			errText := upstreamErrorSummary(resp.StatusCode, respBody)
 
 			// Record failure in Circuit Breaker
@@ -441,16 +538,19 @@ func (s *Server) forwardChatCompletions(w http.ResponseWriter, r *http.Request, 
 		s.recordModelSuccess(candidate)
 		if payload.Stream {
 			streamOpenAIAsAnthropic(w, resp.Body, candidate, s.setReasoningLocked)
+			resp.Body.Close()
 			s.addHistoryEntry(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "chat/completions (stream)")
 			return
 		}
 
 		var out openAIResponse
 		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			resp.Body.Close()
 			writeError(w, http.StatusBadGateway, err)
 			s.addHistoryEntry(r.Method, r.URL.Path, http.StatusBadGateway, duration, candidate, "chat/completions")
 			return
 		}
+		resp.Body.Close()
 		s.cacheReasoningContent(out)
 		message := openAIToAnthropic(out, candidate)
 		writeJSON(w, http.StatusOK, message)
@@ -591,15 +691,24 @@ func (s *Server) profileFromRequest(r *http.Request) (config.Profile, string, er
 }
 
 func normalizeModels(data []byte, profile config.Profile) map[string]any {
+	out := configuredModels(profile)
+	models := out["data"].([]map[string]any)
+	seen := map[string]bool{}
+	for _, model := range models {
+		id, _ := model["id"].(string)
+		if id != "" {
+			seen[id] = true
+		}
+	}
+
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return configuredModels(profile)
+		return out
 	}
 	list, ok := raw["data"].([]any)
 	if !ok {
-		return configuredModels(profile)
+		return out
 	}
-	models := make([]map[string]any, 0, len(list))
 	for _, item := range list {
 		obj, ok := item.(map[string]any)
 		if !ok {
@@ -612,10 +721,11 @@ func normalizeModels(data []byte, profile config.Profile) map[string]any {
 		if id == "" {
 			continue
 		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
 		models = append(models, map[string]any{"id": id, "type": "model", "display_name": id})
-	}
-	if len(models) == 0 {
-		return configuredModels(profile)
 	}
 	return map[string]any{"data": models, "has_more": false}
 }
@@ -623,20 +733,25 @@ func normalizeModels(data []byte, profile config.Profile) map[string]any {
 func configuredModels(profile config.Profile) map[string]any {
 	seen := map[string]bool{}
 	var models []map[string]any
-	add := func(id string) {
-		id = profile.ResolveModel(id)
+	add := func(id string, display string) {
 		if id == "" || seen[id] {
 			return
 		}
 		seen[id] = true
-		models = append(models, map[string]any{"id": id, "type": "model", "display_name": id})
+		if display == "" {
+			display = id
+		}
+		models = append(models, map[string]any{"id": id, "type": "model", "display_name": display})
 	}
-	add(profile.DefaultModel)
-	for alias := range profile.ModelAliases {
-		add(alias)
+	add("claude-sonnet-4-5", "Claude Sonnet -> "+profile.ResolveModel("claude-sonnet-4-5"))
+	add("claude-haiku-4-5", "Claude Haiku -> "+profile.ResolveModel("claude-haiku-4-5"))
+	add("claude-opus-4-7", "Claude Opus -> "+profile.ResolveModel("claude-opus-4-7"))
+	add(profile.DefaultModel, "Default -> "+profile.ResolveModel(""))
+	for alias, target := range profile.ModelAliases {
+		add(alias, alias+" -> "+target)
 	}
 	for _, id := range profile.MessageModels {
-		add(id)
+		add(id, "Messages -> "+id)
 	}
 	return map[string]any{"data": models, "has_more": false}
 }
@@ -692,13 +807,40 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, status)
 }
 
+// maskAPIKey returns a masked version of the key showing only the first 4 and last 4 chars.
+// If the key is empty or too short, returns an appropriate placeholder.
+func maskAPIKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	if len(key) <= 8 {
+		return "****"
+	}
+	return key[:4] + "..." + key[len(key)-4:]
+}
+
 func (s *Server) apiProfiles(w http.ResponseWriter, r *http.Request) {
 	s.configMu.RLock()
 	defer s.configMu.RUnlock()
 
+	// Mask API keys before sending to frontend
+	masked := make(map[string]any, len(s.config.Profiles))
+	for name, p := range s.config.Profiles {
+		masked[name] = map[string]any{
+			"api_key_env":        p.APIKeyEnv,
+			"api_key":            maskAPIKey(p.APIKey),
+			"api_key_configured": p.APIKeyValue() != "",
+			"default_model":      p.DefaultModel,
+			"model_aliases":      p.ModelAliases,
+			"message_models":     p.MessageModels,
+			"fallback_chain":     p.FallbackChain,
+			"headers":            p.Headers,
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"active_profile": s.config.ActiveProfile,
-		"profiles":       s.config.Profiles,
+		"profiles":       masked,
 	})
 }
 
@@ -778,6 +920,12 @@ func (s *Server) apiSetKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If the API key looks masked (contains "..." or is the short placeholder),
+	// don't overwrite the existing key — the frontend sent back the masked value
+	// because the user didn't change it.
+	if strings.Contains(req.APIKey, "...") || req.APIKey == "****" {
+		req.APIKey = p.APIKey
+	}
 	p.APIKey = req.APIKey
 	if req.DefaultModel != "" {
 		p.DefaultModel = req.DefaultModel
@@ -808,12 +956,24 @@ func (s *Server) apiSetKey(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiHistory(w http.ResponseWriter, r *http.Request) {
-	s.historyMu.RLock()
-	defer s.historyMu.RUnlock()
-
-	if s.history == nil {
-		writeJSON(w, http.StatusOK, []requestLogEntry{})
-		return
+	switch r.Method {
+	case http.MethodGet:
+		s.historyMu.RLock()
+		if s.history == nil {
+			s.historyMu.RUnlock()
+			writeJSON(w, http.StatusOK, []requestLogEntry{})
+			return
+		}
+		hist := make([]requestLogEntry, len(s.history))
+		copy(hist, s.history)
+		s.historyMu.RUnlock()
+		writeJSON(w, http.StatusOK, hist)
+	case http.MethodDelete:
+		s.historyMu.Lock()
+		s.history = s.history[:0]
+		s.historyMu.Unlock()
+		writeJSON(w, http.StatusOK, map[string]string{"status": "cleared"})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, fmt.Errorf("method %s not supported", r.Method))
 	}
-	writeJSON(w, http.StatusOK, s.history)
 }

@@ -1,10 +1,52 @@
-// 全局状态变量
+// ── ocgt Web Dashboard v0.1.9 ──
+// Premium polished web control panel
+
 let API_BASE = 'http://127.0.0.1:8787';
 let systemStatus = null;
 let currentShell = 'powershell';
 let proxyReady = false;
 
-// DOM
+// ── Toast System ──
+function toast(message, type) {
+    type = type || 'info';
+    const container = document.getElementById('toastContainer');
+    if (!container) return;
+    const el = document.createElement('div');
+    el.className = `toast toast-${type}`;
+    const icons = {
+        success: '<svg style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+        error: '<svg style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+        warning: '<svg style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+        info: '<svg style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
+    };
+    el.innerHTML = (icons[type] || icons.info) + `<span class="toast-msg">${escapeHtml(message)}</span><button class="toast-close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>`;
+    container.appendChild(el);
+    const closeBtn = el.querySelector('.toast-close');
+    const dismiss = () => {
+        if (el.classList.contains('toast-out')) return;
+        el.classList.add('toast-out');
+        el.addEventListener('animationend', () => { if (el.parentNode) el.remove(); }, { once: true });
+    };
+    closeBtn.addEventListener('click', dismiss);
+    const timer = setTimeout(dismiss, 4000);
+    el.addEventListener('mouseenter', () => clearTimeout(timer));
+    el.addEventListener('mouseleave', () => { const t = setTimeout(dismiss, 2000); el._timer = t; });
+}
+
+function escapeHtml(value) {
+    return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+async function apiFetch(path, options = {}, timeoutMs = 8000) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try { return await fetch(`${API_BASE}${path}`, { ...options, signal: controller.signal }); }
+    finally { clearTimeout(timeout); }
+}
+
+// ── DOM ──
 const elListen = document.getElementById('status-listen');
 const elUpstream = document.getElementById('status-upstream');
 const elProfile = document.getElementById('status-profile');
@@ -32,100 +74,63 @@ const btnCopyEnv = document.getElementById('copy-env-btn');
 const btnCopyCCSwitch = document.getElementById('copy-ccswitch-btn');
 const tbodyHistory = document.getElementById('history-tbody');
 const themeToggleBtn = document.getElementById('themeToggleBtn');
-const statusPill = document.getElementById('statusPill');
-const uptimeBadge = document.querySelector('.uptime-badge');
+const statusText = document.getElementById('status-text');
+const inputCloseBehavior = document.getElementById('close-behavior-input');
+const btnAboutApp = document.getElementById('about-app-btn');
+const aboutDialogOverlay = document.getElementById('aboutDialogOverlay');
+const aboutDialogClose = document.getElementById('aboutDialogClose');
 
+// ── Modal helpers ──
+function showModal(el) { if (el) { el.classList.add('active'); el.setAttribute('aria-hidden', 'false'); } }
+function hideModal(el) { if (el) { el.classList.remove('active'); el.setAttribute('aria-hidden', 'true'); } }
+
+// ── Init ──
 document.addEventListener('DOMContentLoaded', () => {
     setupEventHandlers();
     initializeApp();
-    setInterval(() => {
-        if (proxyReady) {
-            loadHistory();
-        } else {
-            initializeApp();
-        }
-    }, 2500);
+    setInterval(() => { if (proxyReady) loadHistory(); else initializeApp(); }, 2500);
 });
 
 async function initializeApp() {
     setProxyConnectionState('connecting');
     await resolveApiBase();
     proxyReady = await waitForProxyReady();
-    if (!proxyReady) {
-        setProxyConnectionState('offline');
-        return;
-    }
+    if (!proxyReady) { setProxyConnectionState('offline'); return; }
     setProxyConnectionState('online');
-    await Promise.all([loadStatus(), loadProfiles(), loadHistory()]);
+    await Promise.all([loadStatus(), loadProfiles(), loadHistory(), loadPreferences()]);
 }
 
 async function resolveApiBase() {
-    if (!(window.go && window.go.main && window.go.main.App && window.go.main.App.GetListenAddress)) {
-        return;
-    }
+    if (!(window.go && window.go.main && window.go.main.App && window.go.main.App.GetListenAddress)) return;
     try {
         const addr = await window.go.main.App.GetListenAddress();
-        if (addr) {
-            API_BASE = `http://${addr}`;
-        }
-    } catch (err) {
-        console.error("Wails GetListenAddress error:", err);
-    }
+        if (addr) API_BASE = `http://${addr}`;
+    } catch (err) { console.error("Wails GetListenAddress error:", err); }
 }
 
 async function waitForProxyReady(timeoutMs = 2500) {
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
-        try {
-            const resp = await apiFetch('/healthz', { cache: 'no-store' }, 700);
-            if (resp.ok) return true;
-        } catch (err) {
-            // Retry until the Wails-started proxy finishes binding its port.
-        }
+        try { const resp = await apiFetch('/healthz', { cache: 'no-store' }, 700); if (resp.ok) return true; }
+        catch (err) { /* retry */ }
         await delay(350);
     }
     return false;
 }
 
-function delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-async function apiFetch(path, options = {}, timeoutMs = 8000) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-        return await fetch(`${API_BASE}${path}`, {
-            ...options,
-            signal: controller.signal
-        });
-    } finally {
-        clearTimeout(timeout);
-    }
-}
-
 function setProxyConnectionState(state) {
-    const meta = {
-        connecting: { text: '代理连接中', className: 'connecting' },
-        online: { text: '代理已连接', className: 'online' },
-        offline: { text: '代理未连接', className: 'offline' }
-    }[state];
-    if (!meta) return;
-
-    if (statusPill) {
-        statusPill.classList.remove('online', 'offline', 'connecting');
-        statusPill.classList.add(meta.className);
-        const text = statusPill.querySelector('span:last-child');
-        if (text) text.textContent = meta.text;
-    }
-    if (uptimeBadge) {
-        uptimeBadge.classList.remove('online', 'offline', 'connecting');
-        uptimeBadge.classList.add(meta.className);
-        const text = uptimeBadge.querySelector('span:last-child');
-        if (text) text.textContent = meta.text;
+    if (!statusText) return;
+    const texts = { connecting: '代理连接中', online: '代理已连接', offline: '代理未连接' };
+    statusText.textContent = texts[state] || texts.offline;
+    const dot = document.querySelector('.status-dot');
+    if (dot) {
+        if (state === 'online') dot.style.background = 'var(--success)';
+        else if (state === 'connecting') dot.style.background = 'var(--warning)';
+        else dot.style.background = 'var(--danger)';
     }
 }
 
+// ── Load Status ──
 async function loadStatus() {
     try {
         const resp = await apiFetch('/ocgt/api/status');
@@ -138,87 +143,58 @@ async function loadStatus() {
         elConfigPath.textContent = systemStatus.config_path;
         if (elApiKey) {
             elApiKey.textContent = systemStatus.api_key_configured === false ? '未配置' : '已配置';
-            elApiKey.style.color = systemStatus.api_key_configured === false ? 'var(--yellow)' : 'var(--green)';
+            elApiKey.style.color = systemStatus.api_key_configured === false ? 'var(--warning)' : 'var(--success)';
         }
         if (elTimeout) {
             const seconds = Number(systemStatus.request_timeout_seconds || 300);
             elTimeout.textContent = `${seconds}s`;
-            if (inputTimeout && !document.activeElement.isSameNode(inputTimeout)) {
-                inputTimeout.value = seconds.toString();
-            }
+            if (inputTimeout && !document.activeElement.isSameNode(inputTimeout)) inputTimeout.value = seconds.toString();
         }
         if (inputThinkingBudget) {
             const budget = Number(systemStatus.max_thinking_budget_tokens ?? 512);
-            if (!document.activeElement.isSameNode(inputThinkingBudget)) {
-                setThinkingBudgetValue(budget.toString());
-            }
+            if (!document.activeElement.isSameNode(inputThinkingBudget)) setThinkingBudgetValue(budget.toString());
         }
-        // Show auth status
         const elAuth = document.getElementById('status-auth');
         if (elAuth) {
             elAuth.textContent = systemStatus.auth_enabled ? '已启用' : '未启用';
-            elAuth.style.color = systemStatus.auth_enabled ? 'var(--green)' : 'var(--gray)';
+            elAuth.style.color = systemStatus.auth_enabled ? 'var(--success)' : 'var(--text-muted)';
         }
         renderEnvCode();
         renderCCSwitchCode();
         setProxyConnectionState('online');
-        if (systemStatus.api_key_configured === false && uptimeBadge) {
-            const text = uptimeBadge.querySelector('span:last-child');
-            if (text) text.textContent = '代理已连接，密钥未配置';
-        }
         return true;
-    } catch (err) {
-        console.error('Error fetching status:', err);
-        proxyReady = false;
-        setProxyConnectionState('offline');
-        return false;
-    }
+    } catch (err) { console.error('Error fetching status:', err); setProxyConnectionState('offline'); return false; }
 }
 
 function setSelectValue(selectEl, value) {
     if (!selectEl) return;
-    if (!value) {
-        selectEl.selectedIndex = 0;
-        return;
-    }
+    if (!value) { selectEl.selectedIndex = 0; return; }
     let exists = false;
     for (let i = 0; i < selectEl.options.length; i++) {
-        if (selectEl.options[i].value === value) {
-            selectEl.value = value;
-            exists = true;
-            break;
-        }
+        if (selectEl.options[i].value === value) { selectEl.value = value; exists = true; break; }
     }
     if (!exists) {
-        const opt = document.createElement('option');
-        opt.value = value;
-        opt.textContent = value;
-        selectEl.insertBefore(opt, selectEl.lastElementChild);
-        selectEl.value = value;
+        const opt = document.createElement('option'); opt.value = value; opt.textContent = value;
+        selectEl.insertBefore(opt, selectEl.lastElementChild); selectEl.value = value;
     }
 }
 
 function setThinkingBudgetValue(value) {
     if (!inputThinkingBudget) return;
     const allowed = ['256', '512', '1024', '2048', '-1'];
-    if (allowed.includes(value)) {
-        inputThinkingBudget.value = value;
-        return;
-    }
+    if (allowed.includes(value)) { inputThinkingBudget.value = value; return; }
     let opt = Array.from(inputThinkingBudget.options).find(item => item.value === value);
     if (!opt) {
-        opt = document.createElement('option');
-        opt.value = value;
+        opt = document.createElement('option'); opt.value = value;
         opt.textContent = `${value} · 当前自定义值`;
         inputThinkingBudget.insertBefore(opt, inputThinkingBudget.lastElementChild);
     }
     inputThinkingBudget.value = value;
 }
 
-function isAllowedThinkingBudget(value) {
-    return ['256', '512', '1024', '2048', '-1'].includes(value);
-}
+function isAllowedThinkingBudget(value) { return ['256', '512', '1024', '2048', '-1'].includes(value); }
 
+// ── Load Profiles ──
 async function loadProfiles() {
     try {
         const resp = await apiFetch('/ocgt/api/profiles');
@@ -226,97 +202,77 @@ async function loadProfiles() {
         const data = await resp.json();
         selectProfile.innerHTML = '';
         Object.keys(data.profiles).forEach(pName => {
-            const opt = document.createElement('option');
-            opt.value = pName;
-            opt.textContent = pName;
+            const opt = document.createElement('option'); opt.value = pName; opt.textContent = pName;
             if (pName === data.active_profile) opt.selected = true;
             selectProfile.appendChild(opt);
         });
-
-        // Populate fields for active profile
-        const activeProfileName = data.active_profile;
-        const activeProfile = data.profiles[activeProfileName];
-        if (activeProfile) {
-            inputApiKey.value = activeProfile.api_key || '';
-            setSelectValue(inputDefaultModel, activeProfile.default_model || '');
-            
-            const aliases = activeProfile.model_aliases || {};
+        const ap = data.profiles[data.active_profile];
+        if (ap) {
+            inputApiKey.value = ap.api_key || '';
+            setSelectValue(inputDefaultModel, ap.default_model || '');
+            const aliases = ap.model_aliases || {};
             setSelectValue(inputSonnetMapping, aliases.sonnet || '');
             setSelectValue(inputHaikuMapping, aliases.haiku || '');
             setSelectValue(inputOpusMapping, aliases.opus || '');
         }
-    } catch (err) {
-        console.error('Error loading profiles:', err);
-    }
+    } catch (err) { console.error('Error loading profiles:', err); }
 }
 
+// ── Load Preferences ──
+async function loadPreferences() {
+    if (!inputCloseBehavior) return;
+    const DEFAULT_CLOSE_BEHAVIOR = 'prompt';
+    const CLOSE_BEHAVIORS = new Set(['prompt', 'minimize', 'exit']);
+    const normalize = v => CLOSE_BEHAVIORS.has(v) ? v : DEFAULT_CLOSE_BEHAVIOR;
+    
+    if (!(window.go && window.go.main && window.go.main.App && window.go.main.App.GetPreferences)) {
+        inputCloseBehavior.value = DEFAULT_CLOSE_BEHAVIOR;
+        return;
+    }
+    try {
+        const prefs = await window.go.main.App.GetPreferences();
+        inputCloseBehavior.value = normalize(prefs && prefs.close_behavior);
+    } catch (err) { console.error('Failed to load preferences:', err); inputCloseBehavior.value = DEFAULT_CLOSE_BEHAVIOR; }
+}
+
+// ── Load History ──
 async function loadHistory() {
     try {
         const resp = await apiFetch('/ocgt/api/history');
         if (!resp.ok) throw new Error('Failed');
         renderHistoryTable(await resp.json());
-    } catch (err) {
-        console.error('Error loading history:', err);
-    }
+    } catch (err) { console.error('Error loading history:', err); }
 }
 
+// ── Event Handlers ──
 function setupEventHandlers() {
-    // 侧边栏多工作区视图切换
-    const navItems = document.querySelectorAll('.nav-item');
-    const views = document.querySelectorAll('.view');
-    const titleEl = document.getElementById('current-view-title');
-    const subtitleEl = document.getElementById('current-view-subtitle');
-
-    const viewMeta = {
-        dashboard: { title: "系统状态监控", subtitle: "查看当前代理服务运行指标与后台状态" },
-        settings: { title: "一键配置管理中心", subtitle: "快速设置您的 API 密钥与高阶 Claude 模型代理映射" },
-        terminal: { title: "一键控制台激活", subtitle: "一键启动已载入代理环境变量的原生命令行窗口" },
-        history: { title: "流量雷达监控", subtitle: "实时捕获并通过仪表盘统计来自 Claude Code 的 API 请求日志" }
-    };
-
-    navItems.forEach(item => {
-        item.addEventListener('click', () => {
-            const targetViewId = item.dataset.view;
-            if (!targetViewId) return;
-
-            // 1. 更新导航激活状态
-            navItems.forEach(nav => nav.classList.remove('active'));
-            item.classList.add('active');
-
-            // 2. 切换视图显示
-            views.forEach(v => v.classList.remove('active'));
-            const targetView = document.getElementById(`view-${targetViewId}`);
-            if (targetView) targetView.classList.add('active');
-
-            // 3. 动态更新顶栏标题与副标题
-            const meta = viewMeta[targetViewId];
-            if (meta) {
-                titleEl.textContent = meta.title;
-                subtitleEl.textContent = meta.subtitle;
-            }
+    // Theme toggle
+    if (themeToggleBtn) {
+        themeToggleBtn.addEventListener('click', () => {
+            const current = document.documentElement.getAttribute('data-theme') || 'light';
+            const next = current === 'light' ? 'dark' : 'light';
+            document.documentElement.setAttribute('data-theme', next);
+            localStorage.setItem('theme', next);
         });
-    });
+    }
 
+    // Profile change
     selectProfile.addEventListener('change', async (e) => {
         try {
             const resp = await apiFetch('/ocgt/api/profiles/active', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ profile: e.target.value })
             });
-            if (resp.ok) {
-                await loadStatus();
-                await loadProfiles();
-            }
-        } catch (err) {
-            console.error('Failed to change profile:', err);
-        }
+            if (resp.ok) { toast('Profile 已切换', 'success'); await loadStatus(); await loadProfiles(); }
+        } catch (err) { console.error('Failed to change profile:', err); }
     });
 
+    // Password visibility
     btnToggleVisibility.addEventListener('click', () => {
         inputApiKey.type = inputApiKey.type === 'password' ? 'text' : 'password';
     });
 
+    // Save config
     btnSaveAllConfig.addEventListener('click', async () => {
         const pName = selectProfile.value;
         const key = inputApiKey.value.trim();
@@ -327,15 +283,12 @@ function setupEventHandlers() {
         const timeoutSeconds = inputTimeout ? inputTimeout.value.trim() : '300';
         const thinkingBudget = inputThinkingBudget ? inputThinkingBudget.value.trim() : '512';
         const timeoutNumber = Number(timeoutSeconds);
-        const thinkingBudgetNumber = Number(thinkingBudget);
 
         if (!Number.isInteger(timeoutNumber) || timeoutNumber < 1 || timeoutNumber > 3600) {
-            alert('请求超时必须是 1 到 3600 之间的整数秒。');
-            return;
+            toast('请求超时必须是 1 到 3600 之间的整数秒。', 'error'); return;
         }
         if (!isAllowedThinkingBudget(thinkingBudget)) {
-            alert('请选择有效的思考强度。');
-            return;
+            toast('请选择有效的思考强度。', 'error'); return;
         }
 
         setButtonState(btnSaveAllConfig, 'saving');
@@ -344,241 +297,172 @@ function setupEventHandlers() {
             try {
                 const res = await window.go.main.App.SaveProfileConfig(pName, key, defModel, sonnet, haiku, opus, timeoutSeconds, thinkingBudget);
                 if (res === "success") {
+                    if (inputCloseBehavior && window.go.main.App.SavePreferences) {
+                        const prefs = normalizeCloseBehavior(inputCloseBehavior.value);
+                        await window.go.main.App.SavePreferences(prefs);
+                    }
                     setButtonState(btnSaveAllConfig, 'success');
-                    await installClaudeUserEnv(false);
-                    await loadStatus();
-                    await loadProfiles();
+                    toast('配置已保存并热重载', 'success');
+                    await loadStatus(); await loadProfiles();
                     setTimeout(() => setButtonState(btnSaveAllConfig, 'idle'), 1500);
-                } else {
-                    setButtonState(btnSaveAllConfig, 'idle');
-                    alert('保存失败: ' + res);
-                }
-            } catch (err) {
-                console.error('Failed to save config via Wails:', err);
-                setButtonState(btnSaveAllConfig, 'idle');
-                alert('保存出错: ' + err.message);
-            }
+                } else { setButtonState(btnSaveAllConfig, 'idle'); toast('保存失败: ' + res, 'error'); }
+            } catch (err) { console.error('Failed to save config via Wails:', err); setButtonState(btnSaveAllConfig, 'idle'); toast('保存出错: ' + err.message, 'error'); }
         } else {
-            // Fallback for API call if running in browser directly
             try {
                 const resp = await apiFetch('/ocgt/api/key', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        profile: pName,
-                        api_key: key,
-                        default_model: defModel,
-                        model_aliases: { sonnet, haiku, opus },
-                        request_timeout_seconds: timeoutNumber,
-                        max_thinking_budget_tokens: thinkingBudgetNumber
-                    })
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ profile: pName, api_key: key, default_model: defModel,
+                        model_aliases: { sonnet, haiku, opus }, request_timeout_seconds: timeoutNumber,
+                        max_thinking_budget_tokens: Number(thinkingBudget) })
                 });
-                if (resp.ok) {
-                    setButtonState(btnSaveAllConfig, 'success');
-                    await loadStatus();
-                    await loadProfiles();
-                    setTimeout(() => setButtonState(btnSaveAllConfig, 'idle'), 1500);
-                } else {
-                    setButtonState(btnSaveAllConfig, 'idle');
-                    alert('保存失败，请检查控制台。');
-                }
-            } catch (err) {
-                console.error('Fallback save error:', err);
-                setButtonState(btnSaveAllConfig, 'idle');
-            }
+                if (resp.ok) { setButtonState(btnSaveAllConfig, 'success'); toast('配置已保存并热重载', 'success'); await loadStatus(); await loadProfiles(); setTimeout(() => setButtonState(btnSaveAllConfig, 'idle'), 1500); }
+                else { setButtonState(btnSaveAllConfig, 'idle'); toast('保存失败', 'error'); }
+            } catch (err) { console.error('Fallback save error:', err); setButtonState(btnSaveAllConfig, 'idle'); }
         }
     });
 
-    if (btnInstallEnv) {
-        btnInstallEnv.addEventListener('click', () => installClaudeUserEnv(true));
-    }
-
-    if (btnInstallEnvTerminal) {
-        btnInstallEnvTerminal.addEventListener('click', () => installClaudeUserEnv(true));
-    }
-
-    if (btnLaunchTerminal) {
-        btnLaunchTerminal.addEventListener('click', async () => {
-            if (window.go && window.go.main && window.go.main.App) {
-                btnLaunchTerminal.disabled = true;
-                const originalText = btnLaunchTerminal.innerHTML;
-                btnLaunchTerminal.innerHTML = '<span class="status-dot pulse" style="background-color:white;width:6px;height:6px;margin-right:8px;"></span>启动中...';
-                try {
-                    const res = await window.go.main.App.LaunchClaudeTerminal(currentShell);
-                    if (res === "success") {
-                        btnLaunchTerminal.innerHTML = '已启动终端 ✓';
-                        btnLaunchTerminal.style.background = 'var(--green)';
-                        setTimeout(() => {
-                            btnLaunchTerminal.disabled = false;
-                            btnLaunchTerminal.innerHTML = originalText;
-                            btnLaunchTerminal.style.background = '';
-                        }, 2000);
-                    } else {
-                        btnLaunchTerminal.disabled = false;
-                        btnLaunchTerminal.innerHTML = originalText;
-                        btnLaunchTerminal.style.background = '';
-                        alert('启动失败: ' + res);
-                    }
-                } catch (err) {
-                    btnLaunchTerminal.disabled = false;
-                    btnLaunchTerminal.innerHTML = originalText;
-                    btnLaunchTerminal.style.background = '';
-                    console.error("Launch terminal error:", err);
-                    alert('启动终端发生错误: ' + err.message);
-                }
-            } else {
-                alert('一键启动终端仅在桌面版 app 客户端可用，请在桌面端中点击使用！');
+    // Close behavior
+    if (inputCloseBehavior) {
+        inputCloseBehavior.addEventListener('change', async () => {
+            if (window.go && window.go.main && window.go.main.App && window.go.main.App.SavePreferences) {
+                try { await window.go.main.App.SavePreferences(normalizeCloseBehavior(inputCloseBehavior.value)); }
+                catch (err) { console.error('Failed to save close behavior:', err); }
             }
         });
     }
 
+    // Install env
+    if (btnInstallEnv) btnInstallEnv.addEventListener('click', () => installClaudeUserEnv(true));
+    if (btnInstallEnvTerminal) btnInstallEnvTerminal.addEventListener('click', () => installClaudeUserEnv(true));
+
+    // Launch terminal
+    if (btnLaunchTerminal) {
+        btnLaunchTerminal.addEventListener('click', async () => {
+            if (window.go && window.go.main && window.go.main.App) {
+                btnLaunchTerminal.disabled = true;
+                const original = btnLaunchTerminal.innerHTML;
+                btnLaunchTerminal.innerHTML = '启动中...';
+                try {
+                    const res = await window.go.main.App.LaunchClaudeTerminal(currentShell);
+                    if (res === "success") {
+                        btnLaunchTerminal.innerHTML = '已启动终端 ✓';
+                        btnLaunchTerminal.classList.add('btn-success');
+                        toast('终端已启动', 'success');
+                        setTimeout(() => { btnLaunchTerminal.disabled = false; btnLaunchTerminal.innerHTML = original; btnLaunchTerminal.classList.remove('btn-success'); }, 2000);
+                    } else { btnLaunchTerminal.disabled = false; btnLaunchTerminal.innerHTML = original; toast('启动失败: ' + res, 'error'); }
+                } catch (err) { btnLaunchTerminal.disabled = false; btnLaunchTerminal.innerHTML = original; toast('启动终端发生错误: ' + err.message, 'error'); }
+            } else { toast('一键启动终端仅在桌面版 app 客户端可用', 'warning'); }
+        });
+    }
+
+    // Shell tabs
     shellTabs.addEventListener('click', (e) => {
-        const btn = e.target.closest('.shell-tab');
+        const btn = e.target.closest('.tab-btn');
         if (!btn) return;
-        shellTabs.querySelectorAll('.shell-tab').forEach(b => b.classList.remove('active'));
+        shellTabs.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         currentShell = btn.dataset.shell;
         renderEnvCode();
     });
 
+    // Copy buttons
     btnCopyEnv.addEventListener('click', () => copyText(codeEnv.innerText, btnCopyEnv));
     btnCopyCCSwitch.addEventListener('click', () => copyText(codeCCSwitch.innerText, btnCopyCCSwitch));
 
-    if (themeToggleBtn) {
-        themeToggleBtn.addEventListener('click', () => {
-            const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
-            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
-            document.documentElement.setAttribute('data-theme', newTheme);
-            localStorage.setItem('theme', newTheme);
-        });
-    }
-
-    // 绑定四个模型下拉框的“自定义”选择逻辑
+    // Custom model handlers
     const handleModelSelectChange = (selectEl) => {
         if (!selectEl) return;
         selectEl.addEventListener('change', (e) => {
             if (e.target.value === 'custom') {
-                const newVal = prompt("请输入您想映射或设定的自定义模型名称 (例如: my-custom-model):");
+                const newVal = window.prompt("请输入您想映射或设定的自定义模型名称 (例如: my-custom-model):");
                 if (newVal && newVal.trim()) {
                     const value = newVal.trim();
                     let exists = false;
                     for (let i = 0; i < selectEl.options.length; i++) {
-                        if (selectEl.options[i].value === value) {
-                            selectEl.selectedIndex = i;
-                            exists = true;
-                            break;
-                        }
+                        if (selectEl.options[i].value === value) { selectEl.selectedIndex = i; exists = true; break; }
                     }
                     if (!exists) {
-                        const opt = document.createElement('option');
-                        opt.value = value;
-                        opt.textContent = value;
-                        selectEl.insertBefore(opt, selectEl.lastElementChild);
-                        selectEl.value = value;
+                        const opt = document.createElement('option'); opt.value = value; opt.textContent = value;
+                        selectEl.insertBefore(opt, selectEl.lastElementChild); selectEl.value = value;
                     }
-                } else {
-                    selectEl.selectedIndex = 0; // 回滚到默认
-                }
+                } else { selectEl.selectedIndex = 0; }
             }
         });
     };
-
     handleModelSelectChange(inputDefaultModel);
     handleModelSelectChange(inputSonnetMapping);
     handleModelSelectChange(inputHaikuMapping);
     handleModelSelectChange(inputOpusMapping);
 
-    // 绑定“打开所在文件夹”按钮
-    const btnOpenConfig = document.getElementById('open-config-btn');
-    if (btnOpenConfig) {
-        btnOpenConfig.addEventListener('click', async () => {
-            if (window.go && window.go.main && window.go.main.App && window.go.main.App.OpenConfigLocation) {
-                try {
-                    const res = await window.go.main.App.OpenConfigLocation();
-                    if (res !== "success") {
-                        alert("打开失败: " + res);
-                    }
-                } catch (e) {
-                    console.error("OpenConfigLocation error:", e);
-                    alert("无法打开文件夹: " + e.message);
-                }
-            } else {
-                alert("该功能仅在桌面客户端可用。您的配置文件夹通常在您的个人用户目录下的 .ocgt 文件夹中。");
-            }
+    // About modal
+    if (btnAboutApp) {
+        btnAboutApp.addEventListener('click', () => {
+            if (window.go && window.go.main && window.go.main.App && window.go.main.App.ShowAboutDialog) {
+                window.go.main.App.ShowAboutDialog();
+            } else { showModal(aboutDialogOverlay); }
         });
+    }
+    if (aboutDialogClose) aboutDialogClose.addEventListener('click', () => hideModal(aboutDialogOverlay));
+    if (aboutDialogOverlay) aboutDialogOverlay.addEventListener('click', (e) => { if (e.target === aboutDialogOverlay) hideModal(aboutDialogOverlay); });
+
+    // ESC for modals
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideModal(aboutDialogOverlay); });
+
+    // Wails events
+    if (window.runtime && typeof window.runtime.EventsOn === 'function') {
+        window.runtime.EventsOn('nav-to-settings', () => {});
+        window.runtime.EventsOn('show-close-dialog', () => {});
+        window.runtime.EventsOn('show-about-dialog', () => showModal(aboutDialogOverlay));
     }
 }
 
+function normalizeCloseBehavior(value) {
+    const CLOSE_BEHAVIORS = new Set(['prompt', 'minimize', 'exit']);
+    return CLOSE_BEHAVIORS.has(value) ? value : 'prompt';
+}
+
+// ── Install Claude Env ──
 async function installClaudeUserEnv(showAlert) {
     if (!(window.go && window.go.main && window.go.main.App && window.go.main.App.InstallClaudeUserEnv)) {
-        if (showAlert) {
-            alert('该功能仅桌面端可用。当前浏览器模式请复制右侧环境变量手动执行。');
-        }
+        if (showAlert) toast('该功能仅桌面端可用。当前浏览器模式请复制右侧环境变量手动执行。', 'info');
         return false;
     }
-
     const buttons = [btnInstallEnv, btnInstallEnvTerminal].filter(Boolean);
-    buttons.forEach(btn => {
-        btn.disabled = true;
-        btn.dataset.originalText = btn.textContent;
-        btn.textContent = '修复中...';
-    });
-
+    buttons.forEach(btn => { btn.disabled = true; btn.dataset.originalText = btn.textContent; btn.textContent = '修复中...'; });
     try {
         const res = await window.go.main.App.InstallClaudeUserEnv();
         if (res === 'success') {
-            buttons.forEach(btn => {
-                btn.textContent = '已修复，重新打开终端生效';
-            });
-            if (showAlert) {
-                alert('已写入 Windows 用户环境变量。请关闭旧 PowerShell，重新打开终端后再运行 claude。');
-            }
-            setTimeout(() => {
-                buttons.forEach(btn => {
-                    btn.disabled = false;
-                    btn.textContent = btn.dataset.originalText || '一键修复 Claude Code 系统环境变量';
-                });
-            }, 2200);
+            buttons.forEach(btn => { btn.textContent = '已修复，重新打开终端生效'; });
+            if (showAlert) toast('已写入 Windows 用户环境变量。请关闭旧 PowerShell，重新打开终端后再运行 claude。', 'success');
+            setTimeout(() => { buttons.forEach(btn => { btn.disabled = false; btn.textContent = btn.dataset.originalText || '一键修复 Claude Code 系统环境变量'; }); }, 2200);
             return true;
         }
-        if (showAlert) alert('修复失败: ' + res);
+        if (showAlert) toast('修复失败: ' + res, 'error');
         return false;
     } catch (err) {
         console.error('InstallClaudeUserEnv failed:', err);
-        if (showAlert) alert('修复失败: ' + err.message);
+        if (showAlert) toast('修复失败: ' + err.message, 'error');
         return false;
     } finally {
-        if (!buttons.some(btn => btn.textContent === '已修复，重新打开终端生效')) {
-            buttons.forEach(btn => {
-                btn.disabled = false;
-                btn.textContent = btn.dataset.originalText || '一键修复 Claude Code 系统环境变量';
-            });
+        const resetText = '已修复，重新打开终端生效';
+        if (!buttons.some(btn => btn.textContent === resetText)) {
+            buttons.forEach(btn => { btn.disabled = false; btn.textContent = btn.dataset.originalText || '一键修复 Claude Code 系统环境变量'; });
         }
     }
 }
 
+// ── Render env/code ──
 function renderEnvCode() {
     if (!systemStatus) return;
     const { listen, active_profile: profile } = systemStatus;
-    const model = systemStatus.default_model || 'kimi-k2.6';
-    const thinkingBudget = Number.isInteger(Number(systemStatus.max_thinking_budget_tokens))
-        ? Number(systemStatus.max_thinking_budget_tokens)
-        : 512;
+    const thinkingBudget = Number.isInteger(Number(systemStatus.max_thinking_budget_tokens)) ? Number(systemStatus.max_thinking_budget_tokens) : 512;
     const thinkingLines = thinkingBudget < 0
-        ? {
-            powershell: `$env:MAX_THINKING_TOKENS = "0"\n$env:CLAUDE_CODE_DISABLE_THINKING = "1"`,
-            bash: `export MAX_THINKING_TOKENS="0"\nexport CLAUDE_CODE_DISABLE_THINKING="1"`,
-            cmd: `set MAX_THINKING_TOKENS=0\nset CLAUDE_CODE_DISABLE_THINKING=1`
-        }
-        : {
-            powershell: `$env:MAX_THINKING_TOKENS = "${thinkingBudget}"`,
-            bash: `export MAX_THINKING_TOKENS="${thinkingBudget}"`,
-            cmd: `set MAX_THINKING_TOKENS=${thinkingBudget}`
-        };
+        ? { powershell: `$env:MAX_THINKING_TOKENS = "0"\n$env:CLAUDE_CODE_DISABLE_THINKING = "1"`, bash: `export MAX_THINKING_TOKENS="0"\nexport CLAUDE_CODE_DISABLE_THINKING="1"`, cmd: `set MAX_THINKING_TOKENS=0\nset CLAUDE_CODE_DISABLE_THINKING=1` }
+        : { powershell: `$env:MAX_THINKING_TOKENS = "${thinkingBudget}"`, bash: `export MAX_THINKING_TOKENS="${thinkingBudget}"`, cmd: `set MAX_THINKING_TOKENS=${thinkingBudget}` };
     const templates = {
-        powershell: `$env:ANTHROPIC_BASE_URL = "http://${listen}"\n$env:ANTHROPIC_API_KEY = "ocgt-local-proxy"\n$env:ANTHROPIC_CUSTOM_HEADERS = "X-Ocgt-Profile: ${profile}"\n$env:ANTHROPIC_MODEL = "${model}"\n${thinkingLines.powershell}`,
-        bash: `export ANTHROPIC_BASE_URL="http://${listen}"\nexport ANTHROPIC_API_KEY="ocgt-local-proxy"\nexport ANTHROPIC_CUSTOM_HEADERS="X-Ocgt-Profile: ${profile}"\nexport ANTHROPIC_MODEL="${model}"\n${thinkingLines.bash}`,
-        cmd: `set ANTHROPIC_BASE_URL=http://${listen}\nset ANTHROPIC_API_KEY=ocgt-local-proxy\nset ANTHROPIC_CUSTOM_HEADERS=X-Ocgt-Profile:${profile}\nset ANTHROPIC_MODEL=${model}\n${thinkingLines.cmd}`
+        powershell: `$env:ANTHROPIC_BASE_URL = "http://${listen}"\n$env:ANTHROPIC_API_KEY = "ocgt-local-proxy"\n$env:ANTHROPIC_CUSTOM_HEADERS = "X-Ocgt-Profile: ${profile}"\nRemove-Item Env:ANTHROPIC_MODEL -ErrorAction SilentlyContinue\n${thinkingLines.powershell}`,
+        bash: `export ANTHROPIC_BASE_URL="http://${listen}"\nexport ANTHROPIC_API_KEY="ocgt-local-proxy"\nexport ANTHROPIC_CUSTOM_HEADERS="X-Ocgt-Profile: ${profile}"\nunset ANTHROPIC_MODEL\n${thinkingLines.bash}`,
+        cmd: `set ANTHROPIC_BASE_URL=http://${listen}\nset ANTHROPIC_API_KEY=ocgt-local-proxy\nset ANTHROPIC_CUSTOM_HEADERS=X-Ocgt-Profile:${profile}\nset ANTHROPIC_MODEL=\n${thinkingLines.cmd}`
     };
     codeEnv.innerText = templates[currentShell] || templates.powershell;
 }
@@ -586,145 +470,57 @@ function renderEnvCode() {
 function renderCCSwitchCode() {
     if (!systemStatus) return;
     const { listen, active_profile: profile } = systemStatus;
-    const model = systemStatus.default_model || 'kimi-k2.6';
-    codeCCSwitch.innerText = JSON.stringify({
-        name: `ocgt-${profile}`,
-        type: "anthropic",
-        baseURL: `http://${listen}`,
-        apiKey: "ocgt-local-proxy",
-        model,
-        headers: { "X-Ocgt-Profile": profile }
-    }, null, 2);
+    codeCCSwitch.innerText = JSON.stringify({ name: `ocgt-${profile}`, type: "anthropic", baseURL: `http://${listen}`, apiKey: "ocgt-local-proxy", model: "claude-sonnet-4-5", headers: { "X-Ocgt-Profile": profile } }, null, 2);
 }
 
+// ── History table ──
 function renderHistoryTable(logs) {
-    // 动态更新流量仪表盘统计大屏
-    updateTrafficStats(logs);
-
     if (!logs || logs.length === 0) {
-        tbodyHistory.innerHTML = `<tr class="empty-row"><td colspan="7"><div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>暂无流量记录。请使用一键终端或在其他 Shell 中向代理发送请求...</div></td></tr>`;
+        tbodyHistory.innerHTML = `<tr class="empty-row"><td colspan="7"><div class="empty-message"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>暂无流量记录。请使用一键终端或在其他 Shell 中向代理发送请求...</div></td></tr>`;
         return;
     }
     tbodyHistory.innerHTML = logs.map(log => {
         const time = formatTime(new Date(log.time));
         const badge = statusBadge(log.status);
         return `<tr>
-            <td class="time-cell">${time}</td>
-            <td class="method">${log.method}</td>
-            <td class="path-cell" title="${log.path}">${log.path}</td>
-            <td class="model-cell">${log.model || '-'}</td>
+            <td style="color:var(--text-muted);font-size:0.85rem;">${time}</td>
+            <td class="font-mono" style="color:var(--primary);font-weight:700;">${escapeHtml(log.method)}</td>
+            <td class="font-mono" style="max-width:250px;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(log.path)}">${escapeHtml(log.path)}</td>
+            <td class="font-mono">${escapeHtml(log.model || '-')}</td>
             <td>${badge}</td>
-            <td class="duration-cell">${log.duration}</td>
+            <td class="font-mono" style="color:var(--text-muted);">${escapeHtml(log.duration)}</td>
             <td class="error-cell" title="${escapeHtml(log.error || '')}">${escapeHtml(log.error || '-')}</td>
         </tr>`;
     }).join('');
 }
 
-function escapeHtml(value) {
-    return String(value)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-
-function updateTrafficStats(logs) {
-    const totalEl = document.getElementById('traffic-stat-total');
-    const successEl = document.getElementById('traffic-stat-success');
-    const latencyEl = document.getElementById('traffic-stat-latency');
-
-    if (!totalEl || !successEl || !latencyEl) return;
-
-    if (!logs || logs.length === 0) {
-        totalEl.textContent = "0";
-        successEl.textContent = "100.0%";
-        latencyEl.textContent = "0ms";
-        return;
-    }
-
-    const total = logs.length;
-    let successCount = 0;
-    let totalLatencyMs = 0;
-
-    logs.forEach(log => {
-        if (log.status >= 200 && log.status < 300) {
-            successCount++;
-        }
-        totalLatencyMs += parseDurationToMs(log.duration);
-    });
-
-    const successRate = ((successCount / total) * 100).toFixed(1);
-    const avgLatency = Math.round(totalLatencyMs / total);
-
-    totalEl.textContent = total.toString();
-    successEl.textContent = `${successRate}%`;
-    latencyEl.textContent = `${avgLatency}ms`;
-}
-
-function parseDurationToMs(str) {
-    if (!str) return 0;
-    str = str.toLowerCase().trim();
-    if (str.endsWith('ms')) {
-        return parseFloat(str.replace('ms', '')) || 0;
-    }
-    if (str.endsWith('s')) {
-        return (parseFloat(str.replace('s', '')) * 1000) || 0;
-    }
-    return parseFloat(str) || 0;
-}
-
-function formatTime(d) {
-    const p = n => n.toString().padStart(2, '0');
-    return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-}
+function formatTime(d) { const p = n => n.toString().padStart(2, '0'); return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; }
 
 function statusBadge(code) {
-    if (code >= 200 && code < 300) return `<span class="badge-ok">${code}</span>`;
-    if (code >= 400 && code < 500) return `<span class="badge-warn">${code}</span>`;
-    return `<span class="badge-err">${code}</span>`;
+    if (code >= 200 && code < 300) return `<span class="status-badge status-2xx">${code}</span>`;
+    if (code >= 400 && code < 500) return `<span class="status-badge status-4xx">${code}</span>`;
+    return `<span class="status-badge status-5xx">${code}</span>`;
 }
 
 function setButtonState(btn, state) {
-    if (state === 'saving') {
-        btn.disabled = true;
-        btn.textContent = '保存中...';
-        btn.style.opacity = '0.7';
-    } else if (state === 'success') {
-        btn.disabled = true;
-        btn.className = 'btn-primary btn-success';
-        btn.textContent = '已保存';
-        btn.style.opacity = '1';
-    } else {
-        btn.disabled = false;
-        btn.className = 'btn-primary';
-        btn.textContent = '保存并热重载配置';
-        btn.style.opacity = '1';
-    }
+    if (state === 'saving') { btn.disabled = true; btn.textContent = '保存中...'; btn.style.opacity = '0.7'; }
+    else if (state === 'success') { btn.disabled = true; btn.classList.add('btn-success'); btn.textContent = '已保存 ✓'; btn.style.opacity = '1'; }
+    else { btn.disabled = false; btn.classList.remove('btn-success'); btn.textContent = '保存并热重载配置'; btn.style.opacity = '1'; }
 }
 
 function copyText(text, btn) {
+    const span = btn.querySelector('span');
+    const orig = span.textContent;
     const doCopy = () => {
-        const span = btn.querySelector('span');
-        const orig = span.textContent;
-        span.textContent = '已复制';
-        btn.style.borderColor = 'var(--green-border)';
-        btn.style.color = 'var(--green)';
-        setTimeout(() => {
-            span.textContent = orig;
-            btn.style.borderColor = '';
-            btn.style.color = '';
-        }, 1200);
+        span.textContent = '已复制 ✓';
+        btn.style.borderColor = 'var(--success-glow)';
+        btn.style.color = 'var(--success)';
+        setTimeout(() => { span.textContent = orig; btn.style.borderColor = ''; btn.style.color = ''; }, 1500);
     };
-
-    if (navigator.clipboard) {
-        navigator.clipboard.writeText(text).then(doCopy).catch(e => console.error(e));
-    } else {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.position = 'fixed';
-        document.body.appendChild(ta);
-        ta.select();
+    if (navigator.clipboard) { navigator.clipboard.writeText(text).then(doCopy).catch(e => console.error(e)); }
+    else {
+        const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed';
+        document.body.appendChild(ta); ta.select();
         try { document.execCommand('copy'); doCopy(); } catch (e) { console.error(e); }
         document.body.removeChild(ta);
     }

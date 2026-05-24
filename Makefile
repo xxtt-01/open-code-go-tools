@@ -1,11 +1,11 @@
-.PHONY: build test clean lint
-
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-LDFLAGS := -s -w -X main.version=$(VERSION)
-BINARY  := bin/ocgt.exe
-
-build:
-	go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/ocgt
+.PHONY: build test clean lint
+
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+LDFLAGS := -s -w -X github.com/ethan-blue/open-code-go-tools/internal/version.Version=$(VERSION)
+BINARY  := bin/ocgt.exe
+
+build:
+	go build -ldflags "$(LDFLAGS)" -o $(BINARY) .
 
 test:
 	go test ./...

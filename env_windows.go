@@ -20,14 +20,17 @@ var (
 	procSendMessageTimeout = user32.NewProc("SendMessageTimeoutW")
 )
 
-func setWindowsUserEnvironment(name, value string) error {
-	cmd := exec.Command("setx.exe", name, value)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	if err := cmd.Run(); err != nil {
-		return err
-	}
-	broadcastEnvironmentChange()
-	return nil
+func setWindowsUserEnvironment(name, value string) error {
+	// Use PowerShell [Environment]::SetEnvironmentVariable instead of deprecated setx.exe
+	// which has a 1024 character value limit.
+	script := "[Environment]::SetEnvironmentVariable($args[0], $args[1], 'User')"
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", "& { "+script+" }", "--", name, value)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	broadcastEnvironmentChange()
+	return nil
 }
 
 func unsetWindowsUserEnvironment(name string) error {

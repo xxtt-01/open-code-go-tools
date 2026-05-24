@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,13 +13,17 @@ import (
 )
 
 const (
+	CurrentConfigVersion           = 1
 	DefaultListen                  = "127.0.0.1:8787"
 	DefaultUpstream                = "https://opencode.ai/zen/go"
 	DefaultRequestTimeoutSeconds   = 300
 	DefaultMaxThinkingBudgetTokens = 512
+	DefaultRateLimitPerSecond      = 100
+	DefaultRateLimitBurst          = 200
 )
 
 type Config struct {
+	Version                 int                `json:"version,omitempty"`
 	Listen                  string             `json:"listen"`
 	Upstream                string             `json:"upstream"`
 	RequestTimeoutSeconds   int                `json:"request_timeout_seconds,omitempty"`
@@ -27,6 +32,8 @@ type Config struct {
 	Profiles                map[string]Profile `json:"profiles"`
 	LocalAuthToken          string             `json:"local_auth_token,omitempty"`        // Optional local auth token for proxy access
 	MaxConcurrentRequests   int                `json:"max_concurrent_requests,omitempty"` // Optional concurrent request limit
+	RateLimitPerSecond      int                `json:"rate_limit_per_second,omitempty"`   // Rate limit: requests per second per IP
+	RateLimitBurst          int                `json:"rate_limit_burst,omitempty"`        // Rate limit: max burst size per IP
 }
 
 type Profile struct {
@@ -52,6 +59,7 @@ func DefaultPath() (string, error) {
 
 func Example() Config {
 	return Config{
+		Version:                 CurrentConfigVersion,
 		Listen:                  DefaultListen,
 		Upstream:                DefaultUpstream,
 		RequestTimeoutSeconds:   DefaultRequestTimeoutSeconds,
@@ -98,12 +106,14 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("failed to read config file %q: %w", path, err)
 	}
+	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
 
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("failed to parse config file %q: %w", path, err)
 	}
 	cfg.applyDefaults()
+	cfg.Migrate()
 	return cfg, cfg.Validate()
 }
 
@@ -143,11 +153,24 @@ func (c Config) Save(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
+	c.Version = CurrentConfigVersion
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(path, append(data, '\n'), 0o600)
+}
+
+func (c *Config) Migrate() {
+	if c.Version >= CurrentConfigVersion {
+		return
+	}
+	if c.Version == 0 {
+		// v0 → v1: no breaking changes, just stamp the version
+		c.Version = CurrentConfigVersion
+	}
+	// Future migrations go here as else-if chains:
+	// else if c.Version == 1 { ... c.Version = 2 }
 }
 
 func (c *Config) applyDefaults() {
@@ -162,6 +185,12 @@ func (c *Config) applyDefaults() {
 	}
 	if c.MaxThinkingBudgetTokens == 0 {
 		c.MaxThinkingBudgetTokens = DefaultMaxThinkingBudgetTokens
+	}
+	if c.RateLimitPerSecond == 0 {
+		c.RateLimitPerSecond = DefaultRateLimitPerSecond
+	}
+	if c.RateLimitBurst == 0 {
+		c.RateLimitBurst = DefaultRateLimitBurst
 	}
 	if c.Profiles == nil {
 		c.Profiles = map[string]Profile{}
@@ -199,6 +228,18 @@ func (c Config) ThinkingBudgetTokens() int {
 	return c.MaxThinkingBudgetTokens
 }
 
+func (c Config) RateLimit() (perSecond, burst int) {
+	perSecond = c.RateLimitPerSecond
+	if perSecond == 0 {
+		perSecond = DefaultRateLimitPerSecond
+	}
+	burst = c.RateLimitBurst
+	if burst == 0 {
+		burst = DefaultRateLimitBurst
+	}
+	return
+}
+
 func (c Config) RequestTimeout() time.Duration {
 	seconds := c.RequestTimeoutSeconds
 	if seconds == 0 {
@@ -231,13 +272,17 @@ func (c Config) Profile(name string) (Profile, string, error) {
 }
 
 func (p Profile) APIKeyValue() string {
-	if p.APIKey != "" {
+	if p.APIKey != "" && !isMaskedAPIKey(p.APIKey) {
 		return p.APIKey
 	}
 	if p.APIKeyEnv != "" {
 		return os.Getenv(p.APIKeyEnv)
 	}
 	return ""
+}
+
+func isMaskedAPIKey(key string) bool {
+	return key == "****" || strings.Contains(key, "...")
 }
 
 func (p Profile) ResolveModel(model string) string {

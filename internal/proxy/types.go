@@ -45,6 +45,15 @@ type Server struct {
 	circuitMu           sync.Mutex
 	consecutiveFailures map[string]int
 	trippedUntil        map[string]time.Time
+
+	// Auto-generated auth token when config.LocalAuthToken is empty
+	// Protects the dashboard API from in-network access by default
+	autoAuthToken string
+	autoAuthOnce  sync.Once
+
+	// Tracks in-flight streaming requests for graceful shutdown.
+	// On shutdown, ListenAndServe waits for all tracked requests to complete.
+	wg sync.WaitGroup
 }
 
 func (s *Server) SetConfigPath(path string) {
@@ -71,6 +80,7 @@ type anthropicMsg struct {
 }
 
 type anthropicTool struct {
+	Type        string         `json:"type,omitempty"`
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	InputSchema map[string]any `json:"input_schema"`
@@ -87,11 +97,13 @@ type openAIRequest struct {
 	Tools       []openAITool    `json:"tools,omitempty"`
 	ToolChoice  any             `json:"tool_choice,omitempty"`
 	Thinking    any             `json:"thinking,omitempty"`
+	// DeepSeek-compatible thinking effort. Only set for models that advertise this parameter.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 type openAIMessage struct {
 	Role             string     `json:"role"`
-	Content          string     `json:"content,omitempty"`
+	Content          any        `json:"content,omitempty"`
 	ReasoningContent string     `json:"reasoning_content,omitempty"`
 	ToolCallID       string     `json:"tool_call_id,omitempty"`
 	ToolCalls        []toolCall `json:"tool_calls,omitempty"`

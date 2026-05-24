@@ -48,10 +48,11 @@ func runWailsGui() {
 
 	// Configure Wails options
 	err := wails.Run(&options.App{
-		Title:             "ocgt 控制面板",
+		Title:             "ocgt Control Panel / 控制面板",
 		Width:             1100,
 		Height:            850,
-		HideWindowOnClose: true,
+		HideWindowOnClose: false,
+		OnBeforeClose:     app.beforeClose,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
@@ -146,7 +147,11 @@ func cmdServe(args []string) error {
 	}
 	resolvedPath := *configPath
 	if strings.TrimSpace(resolvedPath) == "" {
-		resolvedPath, _ = config.DefaultPath()
+		var err error
+		resolvedPath, err = config.DefaultPath()
+		if err != nil {
+			return fmt.Errorf("failed to determine config path: %w", err)
+		}
 	}
 	srv.SetConfigPath(resolvedPath)
 
@@ -220,7 +225,7 @@ func cmdClaudeEnv(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	_, profile, name, err := selectedProfile(*configPath, *profileName)
+	_, _, name, err := selectedProfile(*configPath, *profileName)
 	if err != nil {
 		return err
 	}
@@ -229,9 +234,6 @@ func cmdClaudeEnv(args []string) error {
 		"ANTHROPIC_API_KEY":        "ocgt-local-proxy",
 		"ANTHROPIC_CUSTOM_HEADERS": "X-Ocgt-Profile: " + name,
 		"OCGT_PROFILE":             name,
-	}
-	if profile.DefaultModel != "" {
-		env["ANTHROPIC_MODEL"] = profile.DefaultModel
 	}
 	printEnv(env, *shell)
 	return nil
@@ -245,7 +247,7 @@ func cmdCCSwitch(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	_, profile, name, err := selectedProfile(*configPath, *profileName)
+	_, _, name, err := selectedProfile(*configPath, *profileName)
 	if err != nil {
 		return err
 	}
@@ -254,7 +256,7 @@ func cmdCCSwitch(args []string) error {
 		"type":    "anthropic",
 		"baseURL": *baseURL,
 		"apiKey":  "ocgt-local-proxy",
-		"model":   profile.DefaultModel,
+		"model":   "claude-sonnet-4-5",
 		"headers": map[string]string{
 			"X-Ocgt-Profile": name,
 		},

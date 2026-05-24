@@ -6,329 +6,272 @@
     <title>ocgt - Claude API Proxy Dashboard</title>
     <script>
         (function() {
-            const savedTheme = localStorage.getItem('theme') || 'light';
-            document.documentElement.setAttribute('data-theme', savedTheme);
+            const savedTheme = localStorage.getItem('theme');
+            document.documentElement.setAttribute('data-theme', savedTheme === 'dark' ? 'dark' : 'light');
         })();
     </script>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="app">
-        <!-- 1. 左侧 Sidebar 导航栏 -->
-        <aside class="sidebar">
-            <div class="sidebar-brand">
+    <div class="background-glow"></div>
+    <!-- Toast container -->
+    <div class="toast-container" id="toastContainer" aria-live="polite"></div>
+
+    <div class="app-container">
+        <!-- Header -->
+        <header class="glass-header">
+            <div class="brand">
                 <div class="logo">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
                     </svg>
                 </div>
-                <div class="brand-title">
-                    <h1>ocgt</h1>
-                    <span class="version">v0.1.8</span>
+                <div class="brand-text">
+                    <h1>ocgt <span class="badge">v0.1.9</span></h1>
+                    <p>Claude Code OpenCode Go Proxy Companion</p>
                 </div>
             </div>
-            
-            <nav class="sidebar-menu">
-                <button class="nav-item active" id="btn-nav-dashboard" data-view="dashboard">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
-                    <span>系统状态</span>
-                </button>
-                <button class="nav-item" id="btn-nav-settings" data-view="settings">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-                    <span>配置管理</span>
-                </button>
-                <button class="nav-item" id="btn-nav-terminal" data-view="terminal">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-                    <span>终端启动</span>
-                </button>
-                <button class="nav-item" id="btn-nav-history" data-view="history">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
-                    <span>流量监控</span>
-                </button>
-            </nav>
-            
-            <div class="sidebar-footer">
-                <div class="status-pill" id="statusPill">
-                    <span class="status-dot pulse"></span>
-                    <span>代理运行中</span>
-                </div>
-                <button class="theme-toggle-btn" id="themeToggleBtn" title="切换主题">
+            <div style="display: flex; align-items: center; gap: 16px;">
+                <button class="header-icon-btn" id="themeToggleBtn" title="Switch theme" aria-label="Switch theme">
                     <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
                     <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
                 </button>
+                <div class="status-indicator">
+                    <span class="status-dot pulsing"></span>
+                    <span class="status-text" id="status-text">代理运行中</span>
+                </div>
             </div>
-        </aside>
+        </header>
 
-        <!-- 2. 右侧 Main Content 主面板 -->
-        <main class="main-content">
-            <!-- 头部状态栏 -->
-            <header class="main-header">
-                <div class="header-left">
-                    <h2 class="view-title" id="current-view-title">系统状态监控</h2>
-                    <p class="view-subtitle" id="current-view-subtitle">查看当前代理服务运行指标与后台状态</p>
-                </div>
-                <div class="header-right">
-                    <div class="uptime-badge">
-                        <span class="pulse-dot"></span>
-                        <span>服务正常</span>
+        <!-- Dashboard Grid -->
+        <div class="dashboard-grid">
+            <!-- Left Column: Status & Config -->
+            <div class="grid-col-left">
+                <!-- System Status -->
+                <div class="glass-card">
+                    <h3 class="card-title">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+                        系统状态
+                    </h3>
+                    <div class="status-list">
+                        <div class="status-item">
+                            <span class="label">监听地址</span>
+                            <span class="value" id="status-listen">-</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="label">上游 API 节点</span>
+                            <span class="value" id="status-upstream">-</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="label">请求超时</span>
+                            <span class="value" id="status-timeout">-</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="label">API Key 状态</span>
+                            <span class="value" id="status-api-key">-</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="label">本地认证</span>
+                            <span class="value" id="status-auth">-</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="label">当前活跃 Profile</span>
+                            <span class="value" id="status-profile">-</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="label">默认解析模型</span>
+                            <span class="value" id="status-model">-</span>
+                        </div>
+                        <div class="status-item full-width">
+                            <span class="label">本地配置文件路径</span>
+                            <span class="value file-path" id="status-config-path">-</span>
+                        </div>
                     </div>
                 </div>
-            </header>
 
-            <!-- 核心视图工作区 (单页容器) -->
-            <div class="view-container">
-                
-                <!-- 🏠 视图 1：系统状态概览 (Dashboard) -->
-                <section class="view active" id="view-dashboard">
-                    <div class="dashboard-grid">
-                        <div class="stat-card">
-                            <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
-                            <div class="stat-info">
-                                <span class="stat-label">监听地址</span>
-                                <h3 class="stat-value" id="status-listen">-</h3>
-                            </div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 12a11.05 11.05 0 0 0-22 0zm-5 0a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"/></svg></div>
-                            <div class="stat-info">
-                                <span class="stat-label">上游 API 节点</span>
-                                <h3 class="stat-value" id="status-upstream">-</h3>
-                            </div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
-                            <div class="stat-info">
-                                <span class="stat-label">请求超时</span>
-                                <h3 class="stat-value" id="status-timeout">-</h3>
-                            </div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7.5" cy="15.5" r="5.5"/><path d="M12 12l8-8"/><path d="M17 4h3v3"/></svg></div>
-                            <div class="stat-info">
-                                <span class="stat-label">API Key 状态</span>
-                                <h3 class="stat-value" id="status-api-key">-</h3>
-                            </div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
-                            <div class="stat-info">
-                                <span class="stat-label">本地认证</span>
-                                <h3 class="stat-value" id="status-auth">-</h3>
-                            </div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
-                            <div class="stat-info">
-                                <span class="stat-label">当前活跃 Profile</span>
-                                <h3 class="stat-value" id="status-profile">-</h3>
-                            </div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></div>
-                            <div class="stat-info">
-                                <span class="stat-label">默认解析模型</span>
-                                <h3 class="stat-value mono" id="status-model">-</h3>
-                            </div>
-                        </div>
-                        <div class="stat-card span-all" style="justify-content: space-between; align-items: center;">
-                            <div style="display: flex; align-items: center; gap: 20px; overflow: hidden; flex: 1;">
-                                <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
-                                <div class="stat-info" style="overflow: hidden; flex: 1;">
-                                    <span class="stat-label">本地配置文件路径</span>
-                                    <h3 class="stat-value mono path-text" id="status-config-path">-</h3>
-                                </div>
-                            </div>
-                            <button class="btn-primary" id="open-config-btn" style="height: 36px; padding: 0 16px; font-size: 12px; flex-shrink: 0; margin-left: 16px; white-space: nowrap;">打开所在文件夹</button>
+                <!-- API Configuration -->
+                <div class="glass-card">
+                    <h3 class="card-title">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                        一键配置管理中心
+                    </h3>
+
+                    <div class="section-label">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                        API Configuration
+                    </div>
+
+                    <div class="form-group">
+                        <label for="profile-select">当前配置 Profile</label>
+                        <div class="custom-select-wrapper">
+                            <select id="profile-select"></select>
                         </div>
                     </div>
-                </section>
 
-                <!-- ⚙️ 视图 2：配置中心 (Settings) -->
-                <section class="view" id="view-settings">
-                    <div class="card settings-card">
-                        <h2 class="card-title">一键配置管理中心</h2>
-                        <div class="field-row">
-                            <div class="field">
-                                <label for="profile-select">当前配置 Profile</label>
-                                <div class="select-wrap">
-                                    <select id="profile-select"></select>
-                                    <svg class="select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
-                                </div>
-                            </div>
-                            <div class="field">
-                                <label for="default-model-input">全局默认模型 (Default Model)</label>
-                                <div class="select-wrap">
-                                    <select id="default-model-input">
-                                        <option value="kimi-k2.6">kimi-k2.6 (推荐 - Kimi 旗舰)</option>
-                                        <option value="kimi-k2.5">kimi-k2.5</option>
-                                        <option value="qwen3.6-plus">qwen3.6-plus (通义千问高效)</option>
-                                        <option value="qwen3.5-plus">qwen3.5-plus</option>
-                                        <option value="deepseek-v4-pro">deepseek-v4-pro (深度求索通用)</option>
-                                        <option value="deepseek-v4-flash">deepseek-v4-flash (极速模型)</option>
-                                        <option value="glm-5.1">glm-5.1 (智谱旗舰)</option>
-                                        <option value="glm-5">glm-5</option>
-                                        <option value="hy3-preview">hy3-preview (混元预览)</option>
-                                        <option value="mimo-v2.5-pro">mimo-v2.5-pro</option>
-                                        <option value="mimo-v2.5">mimo-v2.5</option>
-                                        <option value="minimax-m2.7">minimax-m2.7</option>
-                                        <option value="custom">-- 自定义模型 --</option>
-                                    </select>
-                                    <svg class="select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
-                                </div>
-                            </div>
+                    <div class="form-group">
+                        <label for="default-model-input">全局默认模型 (Default Model)</label>
+                        <div class="custom-select-wrapper">
+                            <select id="default-model-input">
+                                <option value="kimi-k2.6">kimi-k2.6 (推荐 - Kimi 旗舰)</option>
+                                <option value="kimi-k2.5">kimi-k2.5</option>
+                                <option value="qwen3.6-plus">qwen3.6-plus (通义千问高效)</option>
+                                <option value="qwen3.5-plus">qwen3.5-plus</option>
+                                <option value="deepseek-v4-pro">deepseek-v4-pro (深度求索通用)</option>
+                                <option value="deepseek-v4-flash">deepseek-v4-flash (极速模型)</option>
+                                <option value="glm-5.1">glm-5.1 (智谱旗舰)</option>
+                                <option value="glm-5">glm-5</option>
+                                <option value="hy3-preview">hy3-preview (混元预览)</option>
+                                <option value="mimo-v2.5-pro">mimo-v2.5-pro</option>
+                                <option value="mimo-v2.5">mimo-v2.5</option>
+                                <option value="minimax-m2.7">minimax-m2.7</option>
+                                <option value="custom">-- 自定义模型 --</option>
+                            </select>
                         </div>
-                        <div class="field">
-                            <label for="api-key-input">OpenCode Go API Key (代理密钥)</label>
-                            <div class="input-wrap">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="api-key-input">OpenCode Go API Key (代理密钥)</label>
+                        <div class="input-with-action">
+                            <div class="password-wrapper">
                                 <input type="password" id="api-key-input" placeholder="请输入您的 sk-... 密钥">
-                                <button class="eye-btn" type="button" id="toggle-key-visibility" title="切换明文">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                <button class="toggle-password" type="button" id="toggle-key-visibility" title="切换明文" aria-label="Toggle password visibility">
+                                    <svg class="eye-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                                 </button>
                             </div>
                         </div>
-                        <div class="field">
-                            <label for="timeout-input">请求超时检查 (秒，1-3600)</label>
-                            <input type="number" id="timeout-input" min="1" max="3600" step="1" placeholder="300">
-                        </div>
-                        <div class="field">
-                            <label for="thinking-budget-input">思考强度</label>
-                            <div class="select-wrap">
-                                <select id="thinking-budget-input">
-                                    <option value="256">快速 · 低延迟</option>
-                                    <option value="512">均衡 · 推荐</option>
-                                    <option value="1024">深度 · 复杂任务</option>
-                                    <option value="2048">强力 · 重构排错</option>
-                                    <option value="-1">关闭思考</option>
-                                </select>
-                                <svg class="select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
-                            </div>
-                        </div>
-                        
-                        <div class="mapping-section">
-                            <h3 class="section-subtitle">Claude 模型映射设置 (Real-time Alias Mapping)</h3>
-                            <div class="mapping-grid">
-                                <div class="field">
-                                    <label for="mapping-sonnet-input">Sonnet 映射目标</label>
-                                    <div class="select-wrap">
-                                        <select id="mapping-sonnet-input">
-                                            <option value="qwen3.6-plus">qwen3.6-plus (推荐平替)</option>
-                                            <option value="kimi-k2.6">kimi-k2.6</option>
-                                            <option value="deepseek-v4-pro">deepseek-v4-pro</option>
-                                            <option value="glm-5.1">glm-5.1</option>
-                                            <option value="mimo-v2.5-pro">mimo-v2.5-pro</option>
-                                            <option value="minimax-m2.7">minimax-m2.7</option>
-                                            <option value="custom">-- 自定义模型 --</option>
-                                        </select>
-                                        <svg class="select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
-                                    </div>
-                                </div>
-                                <div class="field">
-                                    <label for="mapping-haiku-input">Haiku 映射目标</label>
-                                    <div class="select-wrap">
-                                        <select id="mapping-haiku-input">
-                                            <option value="deepseek-v4-flash">deepseek-v4-flash (推荐极速)</option>
-                                            <option value="qwen3.5-plus">qwen3.5-plus</option>
-                                            <option value="mimo-v2.5">mimo-v2.5</option>
-                                            <option value="kimi-k2.5">kimi-k2.5</option>
-                                            <option value="glm-5">glm-5</option>
-                                            <option value="custom">-- 自定义模型 --</option>
-                                        </select>
-                                        <svg class="select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
-                                    </div>
-                                </div>
-                                <div class="field">
-                                    <label for="mapping-opus-input">Opus 映射目标</label>
-                                    <div class="select-wrap">
-                                        <select id="mapping-opus-input">
-                                            <option value="kimi-k2.6">kimi-k2.6 (推荐长文本)</option>
-                                            <option value="qwen3.6-plus">qwen3.6-plus</option>
-                                            <option value="deepseek-v4-pro">deepseek-v4-pro</option>
-                                            <option value="glm-5.1">glm-5.1</option>
-                                            <option value="mimo-v2.5-pro">mimo-v2.5-pro</option>
-                                            <option value="minimax-m2.7">minimax-m2.7</option>
-                                            <option value="custom">-- 自定义模型 --</option>
-                                        </select>
-                                        <svg class="select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="config-actions">
-                            <button class="btn-primary" id="save-all-config-btn" style="width: 100%;">保存并热重载配置</button>
-                            <button class="btn-secondary full-action-btn" id="install-env-btn" type="button">一键修复 Claude Code 系统环境变量</button>
-                            <p class="hint">保存后同步更新 config.json、热重载 Go 服务，并清理旧登录 Token/CC Switch 本地路由残留</p>
-                            <p class="hint" style="margin-top: 12px; color: var(--accent); font-weight: 600;">💡 提示：在“终端启动”页中只需选择并一键启动任意一种您习惯的命令行窗口即可，无需重复配置多种终端。</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="timeout-input">请求超时检查 (秒，1-3600)</label>
+                        <input type="number" id="timeout-input" min="1" max="3600" step="1" placeholder="300">
+                    </div>
+
+                    <div class="section-label" style="margin-top: 1.5rem;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                        Model Settings
+                    </div>
+
+                    <div class="form-group">
+                        <label for="thinking-budget-input">思考强度（支持模型生效）</label>
+                        <div class="custom-select-wrapper">
+                            <select id="thinking-budget-input">
+                                <option value="256">快速 · 低延迟</option>
+                                <option value="512">慢速 · 强力</option>
+                                <option value="1024">深度 · 复杂任务</option>
+                                <option value="2048">极客 · 强力重构</option>
+                                <option value="-1">关闭思考</option>
+                            </select>
                         </div>
                     </div>
-                </section>
 
-                <!-- 💻 视图 3：终端拉起 & 变量导入 (Terminal) -->
-                <section class="view" id="view-terminal">
-                    <div class="terminal-layout">
-                        <!-- 左栏：一键终端启动 -->
-                        <div class="terminal-left">
-                            <div class="card terminal-card">
-                                <h2 class="card-title">一键唤醒代理控制台</h2>
-                                <div class="shell-tabs-container">
-                                    <label class="field-title-label">目标命令行类型</label>
-                                    <div class="shell-tabs" id="shell-tabs">
-                                        <button class="shell-tab active" data-shell="powershell">PowerShell</button>
-                                        <button class="shell-tab" data-shell="bash">Bash</button>
-                                        <button class="shell-tab" data-shell="cmd">CMD</button>
-                                    </div>
-                                </div>
-                                
-                                <div class="launch-action-zone">
-                                    <button class="btn-primary btn-launch-terminal" id="launch-terminal-btn">
-                                        <svg class="launch-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-                                        一键拉起配置终端 (Launch)
-                                    </button>
-                                    <button class="btn-secondary full-action-btn" id="install-env-terminal-btn" type="button">修复以后所有新终端环境变量</button>
-                                    <p class="hint">一键注入当前 Profile 代理变量并打开原生 shell。直接打 <code>claude</code> 即可开始运行！</p>
-                                </div>
-
-                                <div class="guide-box">
-                                    <h4>💡 快捷运行极简指南</h4>
-                                    <ol class="guide-list">
-                                        <li>在上方选项卡选择您常用的命令终端。</li>
-                                        <li>点击 <b>“一键拉起配置终端”</b>，系统会自动唤醒控制台。</li>
-                                        <li>直接在拉起的窗口中键入 <code>claude</code> 即可启动 AI 代码对话。</li>
-                                        <li>（可选）若要在已有终端中工作，可点击右侧的复制按钮导入配置。</li>
-                                        <li><b>提示</b>：终端类型只需选择并一键启动任意一个即可，无需全部配置或启动。</li>
-                                    </ol>
-                                </div>
-                            </div>
+                    <div class="section-label" style="margin-top: 1.5rem;">Claude 模型映射设置</div>
+                    <div class="form-group">
+                        <label for="mapping-sonnet-input">Sonnet 映射目标</label>
+                        <div class="custom-select-wrapper">
+                            <select id="mapping-sonnet-input">
+                                <option value="qwen3.6-plus">qwen3.6-plus (推荐平替)</option>
+                                <option value="kimi-k2.6">kimi-k2.6</option>
+                                <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+                                <option value="glm-5.1">glm-5.1</option>
+                                <option value="mimo-v2.5-pro">mimo-v2.5-pro</option>
+                                <option value="minimax-m2.7">minimax-m2.7</option>
+                                <option value="custom">-- 自定义模型 --</option>
+                            </select>
                         </div>
-                        
-                        <!-- 右栏：环境变量展示（完美解决重叠问题） -->
-                        <div class="terminal-right">
-                            <div class="card code-card">
-                                <div class="code-header">
-                                    <span class="code-title">Claude Code 环境变量 (Env Setup)</span>
-                                    <button class="copy-btn" id="copy-env-btn">
-                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                                        <span>复制</span>
-                                    </button>
-                                </div>
-                                <div class="code-body">
-                                    <pre id="env-code-pre"><code id="env-code-block">$env:ANTHROPIC_BASE_URL = "http://127.0.0.1:8787"
+                    </div>
+                    <div class="form-group">
+                        <label for="mapping-haiku-input">Haiku 映射目标</label>
+                        <div class="custom-select-wrapper">
+                            <select id="mapping-haiku-input">
+                                <option value="deepseek-v4-flash">deepseek-v4-flash (推荐极速)</option>
+                                <option value="qwen3.5-plus">qwen3.5-plus</option>
+                                <option value="mimo-v2.5">mimo-v2.5</option>
+                                <option value="kimi-k2.5">kimi-k2.5</option>
+                                <option value="glm-5">glm-5</option>
+                                <option value="custom">-- 自定义模型 --</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="mapping-opus-input">Opus 映射目标</label>
+                        <div class="custom-select-wrapper">
+                            <select id="mapping-opus-input">
+                                <option value="kimi-k2.6">kimi-k2.6 (推荐长文本)</option>
+                                <option value="qwen3.6-plus">qwen3.6-plus</option>
+                                <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+                                <option value="glm-5.1">glm-5.1</option>
+                                <option value="mimo-v2.5-pro">mimo-v2.5-pro</option>
+                                <option value="minimax-m2.7">minimax-m2.7</option>
+                                <option value="custom">-- 自定义模型 --</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="section-label" style="margin-top: 1.5rem;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                        Application Preferences
+                    </div>
+
+                    <div class="form-group">
+                        <label for="close-behavior-input">关闭窗口时的行为 (Close Behavior)</label>
+                        <div class="custom-select-wrapper">
+                            <select id="close-behavior-input">
+                                <option value="prompt">每次询问 (Prompt Every Time)</option>
+                                <option value="minimize">直接最小化到系统托盘 (Minimize to Tray)</option>
+                                <option value="exit">彻底退出程序 (Exit Directly)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <button class="btn btn-primary" id="save-all-config-btn" style="width: 100%; margin-top: 0.5rem;">保存并热重载配置</button>
+                    <button class="btn btn-secondary" id="install-env-btn" style="width: 100%; margin-top: 0.75rem;">一键修复 Claude Code 系统环境变量</button>
+                    <button class="btn btn-secondary" id="about-app-btn" style="width: 100%; margin-top: 0.5rem;">关于 ocgt (About App)</button>
+                    <p class="input-tip" style="text-align: center;">保存后同步更新 config.json、热重载 Go 服务；思考强度会按模型能力转换，不支持的模型不会发送额外 thinking 字段</p>
+                    <p class="input-tip" style="text-align: center; color: var(--primary); font-weight: 600; margin-top: 8px;">💡 提示：在"终端启动"页中只需选择并一键启动任意一种您习惯的命令行窗口即可，无需重复配置多种终端。</p>
+                </div>
+            </div>
+
+            <!-- Right Column: Terminal & History -->
+            <div class="grid-col-right">
+                <!-- Terminal Launcher -->
+                <div class="glass-card">
+                    <div class="card-header-tabs">
+                        <h3 class="card-title">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                            终端激活
+                        </h3>
+                        <div class="tabs" id="shell-tabs">
+                            <button class="tab-btn active" data-shell="powershell">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                                PowerShell
+                            </button>
+                            <button class="tab-btn" data-shell="bash">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 12H4"/><path d="M10 18l-6-6 6-6"/></svg>
+                                Bash
+                            </button>
+                            <button class="tab-btn" data-shell="cmd">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/></svg>
+                                CMD
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="code-container" style="margin-bottom: 1rem;">
+                        <pre id="env-code-pre"><code id="env-code-block">$env:ANTHROPIC_BASE_URL = "http://127.0.0.1:8787"
 $env:ANTHROPIC_API_KEY = "ocgt-local-proxy"
 $env:ANTHROPIC_CUSTOM_HEADERS = "X-Ocgt-Profile: opencode-go"
-$env:ANTHROPIC_MODEL = "kimi-k2.6"</code></pre>
-                                </div>
-                            </div>
+Remove-Item Env:ANTHROPIC_MODEL -ErrorAction SilentlyContinue</code></pre>
+                        <button class="copy-btn" id="copy-env-btn">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                            <span>复制</span>
+                        </button>
+                    </div>
 
-                            <div class="card code-card" style="margin-top: 16px;">
-                                <div class="code-header">
-                                    <span class="code-title">CC Switch 提供商配置 (JSON Import)</span>
-                                    <button class="copy-btn" id="copy-ccswitch-btn">
-                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                                        <span>复制</span>
-                                    </button>
-                                </div>
-                                <div class="code-body">
-                                    <pre id="ccswitch-code-pre"><code id="ccswitch-code-block">{
+                    <button class="btn btn-primary" id="launch-terminal-btn" style="width: 100%;">一键拉起配置终端 (Launch)</button>
+                    <button class="btn btn-secondary" id="install-env-terminal-btn" style="width: 100%; margin-top: 0.5rem;">修复以后所有新终端环境变量</button>
+
+                    <div class="code-container" style="margin-top: 1rem;">
+                        <pre id="ccswitch-code-pre"><code id="ccswitch-code-block">{
   "name": "ocgt-opencode-go",
   "type": "anthropic",
   "baseURL": "http://127.0.0.1:8787",
@@ -336,78 +279,83 @@ $env:ANTHROPIC_MODEL = "kimi-k2.6"</code></pre>
   "model": "kimi-k2.6",
   "headers": { "X-Ocgt-Profile": "opencode-go" }
 }</code></pre>
-                                </div>
-                            </div>
+                        <button class="copy-btn" id="copy-ccswitch-btn">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                            <span>复制</span>
+                        </button>
+                    </div>
+                    <p class="card-tip" style="text-align: center;">💡 一键注入当前 Profile 代理变量并打开原生 shell。直接打 <code>claude</code> 即可开始运行！</p>
+                </div>
+
+                <!-- Traffic History -->
+                <div class="glass-card full-width">
+                    <div class="card-header-action">
+                        <h3 class="card-title">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                            实时流量监控
+                        </h3>
+                        <div class="live-pulse">
+                            <span class="pulse-dot"></span>
+                            <span>实时流量雷达持续监听中</span>
                         </div>
                     </div>
-                </section>
 
-                <!-- 📊 视图 4：实时流量监控 (History Logs) -->
-                <section class="view" id="view-history">
-                    <div class="traffic-panel">
-                        <!-- 顶部监控统计卡 -->
-                        <div class="traffic-stats">
-                            <div class="stat-mini-card">
-                                <span class="stat-mini-label">总吞吐请求量</span>
-                                <h4 class="stat-mini-value" id="traffic-stat-total">0</h4>
-                            </div>
-                            <div class="stat-mini-card">
-                                <span class="stat-mini-label">请求成功率</span>
-                                <h4 class="stat-mini-value success" id="traffic-stat-success">100.0%</h4>
-                            </div>
-                            <div class="stat-mini-card">
-                                <span class="stat-mini-label">平均响应延时</span>
-                                <h4 class="stat-mini-value" id="traffic-stat-latency">0ms</h4>
-                            </div>
-                        </div>
-
-                        <!-- 表格监控区域 -->
-                        <div class="traffic-table-container">
-                            <div class="table-wrap">
-                                <table class="data-table">
-                                    <thead>
-                                        <tr>
-                                            <th>时间</th>
-                                            <th>方法</th>
-                                            <th>路由路径</th>
-                                            <th>解析模型</th>
-                                            <th>状态码</th>
-                                            <th>耗时</th>
-                                            <th>错误原因</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="history-tbody">
-                                        <tr class="empty-row">
-                                            <td colspan="7">
-                                                <div class="empty-state">
-                                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                                                        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-                                                    </svg>
-                                                    暂无流量记录。请使用一键终端或在其他 Shell 中向代理发送请求...
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                        
-                        <div class="traffic-footer">
-                            <div class="live-tag">
-                                <span class="live-dot"></span>
-                                <span>实时流量雷达持续监听中</span>
-                            </div>
-                        </div>
+                    <div class="table-responsive">
+                        <table class="history-table">
+                            <thead>
+                                <tr>
+                                    <th>时间</th>
+                                    <th>方法</th>
+                                    <th>路由路径</th>
+                                    <th>解析模型</th>
+                                    <th>状态码</th>
+                                    <th>耗时</th>
+                                    <th>错误原因</th>
+                                </tr>
+                            </thead>
+                            <tbody id="history-tbody">
+                                <tr class="empty-row">
+                                    <td colspan="7">
+                                        <div class="empty-message">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                                            暂无流量记录。请使用一键终端或在其他 Shell 中向代理发送请求...
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
-                </section>
-
+                </div>
             </div>
-            
-            <footer class="footer-bar">
-                <span>ocgt &copy; 2026 &middot; MIT Licensed &middot; Official OpenCode Go Companion</span>
-            </footer>
-        </main>
+        </div>
+
+        <footer class="app-footer">
+            <span>ocgt &copy; 2026 &middot; MIT Licensed &middot; Official OpenCode Go Companion Center</span>
+        </footer>
     </div>
+
+    <!-- About Modal -->
+    <div class="modal-overlay" id="aboutDialogOverlay" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true">
+            <div class="modal-icon-wrap about-icon">
+                <svg class="modal-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                </svg>
+            </div>
+            <h3 class="modal-title">ocgt</h3>
+            <div class="about-version-badge">v0.1.9</div>
+            <p class="modal-msg">专为 Claude Code 与 OpenCode Go 打造的极简桌面控制面板与代理</p>
+            <div class="about-meta">
+                <div class="about-meta-row"><span>作者</span><span>ethan-blue</span></div>
+                <div class="about-meta-row"><span>许可证</span><span>MIT Licensed</span></div>
+                <div class="about-meta-row"><span>项目地址</span><span class="font-mono" style="font-size:11px">github.com/ethan-blue/open-code-go-tools</span></div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-primary" id="aboutDialogClose">关闭</button>
+            </div>
+        </div>
+    </div>
+
     <script src="app.js"></script>
 </body>
 </html>

@@ -107,9 +107,26 @@ func writeUpstreamError(w http.ResponseWriter, status int, body []byte) {
 		writeError(w, status, fmt.Errorf("upstream returned %d", status))
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write(body)
+	// Sanitize: truncate to prevent leaking sensitive details
+	msg := strings.TrimSpace(string(body))
+	if len(msg) > 200 {
+		msg = msg[:200] + "..."
+	}
+	// Clean up common patterns that leak internal info
+	msg = sanitizeErrorMessage(msg)
+	writeError(w, status, fmt.Errorf("%s", msg))
+}
+
+func sanitizeErrorMessage(msg string) string {
+	// Remove potential sensitive patterns
+	msg = strings.ReplaceAll(msg, "\\n", " ")
+	msg = strings.ReplaceAll(msg, "\n", " ")
+	msg = strings.ReplaceAll(msg, "\r", "")
+	// Collapse repeated spaces
+	for strings.Contains(msg, "  ") {
+		msg = strings.ReplaceAll(msg, "  ", " ")
+	}
+	return strings.TrimSpace(msg)
 }
 
 func upstreamErrorSummary(status int, body []byte) string {
@@ -334,24 +351,26 @@ func rateLimitMiddleware(rl *rateLimiter, next http.Handler) http.Handler {
 
 // getClientIP extracts the client IP from the request
 func getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header first (for proxied requests)
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Take the first IP in the chain
-		if idx := strings.Index(xff, ","); idx != -1 {
-			return strings.TrimSpace(xff[:idx])
-		}
-		return strings.TrimSpace(xff)
-	}
-
-	// Check X-Real-IP header
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return strings.TrimSpace(xri)
-	}
-
-	// Fall back to RemoteAddr
+	// Use the actual TCP connection address as the primary source of truth.
+	// X-Forwarded-For is ONLY trusted when the request comes from a known proxy
+	// (e.g. localhost), otherwise it can be spoofed.
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
 	}
+
+	// Only trust X-Forwarded-For when the direct connection is from localhost
+	if host == "127.0.0.1" || host == "::1" || host == "localhost" {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			if idx := strings.Index(xff, ","); idx != -1 {
+				return strings.TrimSpace(xff[:idx])
+			}
+			return strings.TrimSpace(xff)
+		}
+		if xri := r.Header.Get("X-Real-IP"); xri != "" {
+			return strings.TrimSpace(xri)
+		}
+	}
+
 	return host
 }
