@@ -338,24 +338,95 @@ func (a *App) SaveProfileConfig(profileName, apiKey, defaultModel, sonnetAlias, 
 
 // InstallClaudeUserEnv persists Claude Code environment variables for new shells.
 func (a *App) InstallClaudeUserEnv() string {
+
 	env := a.claudeCodeEnv()
 
+
+
 	for _, name := range legacyClaudeEnvNames() {
+
 		if err := unsetUserEnvironment(name); err != nil {
+
 			return "unset " + name + " error: " + err.Error()
+
 		}
+
 	}
+
 	for name, value := range env {
+
 		if err := setUserEnvironment(name, value); err != nil {
+
 			return "set " + name + " error: " + err.Error()
+
 		}
+
 	}
+
 	if err := syncClaudeSettings(env); err != nil {
+
 		return "sync Claude settings error: " + err.Error()
+
+	}
+
+	return "success"
+
+}
+
+
+
+// SetupClaudeDesktop writes the ocgt proxy env vars into ~/.claude/settings.json
+
+// so the Claude Code Desktop app picks them up automatically.
+
+// This does NOT modify Windows user environment variables — only the settings file.
+
+func (a *App) SetupClaudeDesktop() string {
+
+	env := a.claudeCodeEnv()
+
+	if err := syncClaudeSettings(env); err != nil {
+
+		return "sync Claude settings error: " + err.Error()
+
+	}
+
+	return "success"
+
+}
+
+
+func (a *App) IsClaudeDesktopConfigured() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return false
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return false
+	}
+	envMap, _ := settings["env"].(map[string]any)
+	if envMap == nil {
+		return false
+	}
+	baseURL, ok := envMap["ANTHROPIC_BASE_URL"].(string)
+	if !ok {
+		return false
+	}
+	return strings.Contains(baseURL, a.GetListenAddress())
+}
+
+func (a *App) ClearClaudeDesktop() string {
+	if err := clearClaudeSettings(); err != nil {
+		return "clear Claude settings error: " + err.Error()
 	}
 	return "success"
 }
-
 func (a *App) claudeCodeEnv() map[string]string {
 	listenAddr := a.GetListenAddress()
 	activeProfile := "opencode-go"
@@ -661,6 +732,10 @@ var claudeSettingsPreserveFields = []string{
 	"allowedTools",
 }
 
+// syncClaudeSettings merges the given env vars into ~/.claude/settings.json.
+// It preserves top-level fields like permissions, model, enabledPlugins, etc.
+// NOTE: settings.json must be valid JSON (no comments). If it contains JSON
+// comments, parsing will fail and the operation will abort safely.
 func syncClaudeSettings(env map[string]string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -726,6 +801,52 @@ func syncClaudeSettings(env map[string]string) error {
 	return nil
 }
 
+
+// clearClaudeSettings removes ocgt-specific env vars from ~/.claude/settings.json.
+func clearClaudeSettings() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return err
+	}
+	envMap, _ := settings["env"].(map[string]any)
+	if envMap == nil {
+		return nil
+	}
+	for _, key := range []string{
+		"ANTHROPIC_BASE_URL",
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_CUSTOM_HEADERS",
+		"OCGT_PROFILE",
+		"ANTHROPIC_AUTH_TOKEN",
+	} {
+		delete(envMap, key)
+	}
+	if len(envMap) == 0 {
+		delete(settings, "env")
+	} else {
+		settings["env"] = envMap
+	}
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(settingsPath, append(out, '\n'), 0o600); err != nil {
+		return err
+	}
+	return nil
+}
 // beforeClose is called when the user clicks the 'X' button.
 // IMPORTANT: On Windows, calling wailsruntime.MessageDialog inside this callback
 // is unreliable and causes deadlocks because the window is mid-close.

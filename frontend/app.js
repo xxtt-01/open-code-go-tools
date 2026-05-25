@@ -49,6 +49,7 @@ const i18n = {
         subtitle_settings: "快速设置您的 API 密钥与高阶 Claude 模型代理映射",
         title_terminal: "一键控制台激活",
         subtitle_terminal: "一键启动已载入代理环境变量的原生命令行窗口",
+        hint_desktop_config_short: "一键将 ocgt 代理配置写入 Claude Code 桌面版",
         title_history: "流量雷达监控",
         subtitle_history: "实时捕获并通过仪表盘统计来自 Claude Code 的 API 请求日志",
         lbl_listen: "监听地址",
@@ -58,6 +59,7 @@ const i18n = {
         lbl_profile: "当前活跃 Profile",
         lbl_model: "默认解析模型",
         lbl_config_path: "本地配置文件路径",
+        lbl_desktop_config: "Claude Code 桌面版配置",
         lbl_last_updated: "刚刚更新",
         btn_open_folder: "打开所在文件夹",
         sett_title: "一键配置管理中心",
@@ -92,6 +94,16 @@ const i18n = {
         term_shell_type: "目标命令行类型",
         btn_launch_term: "一键拉起配置终端 (Launch)",
         btn_persistent_env: "修复以后所有新终端环境变量",
+
+        btn_setup_desktop: "配置 Claude Code 桌面版",
+
+        status_configuring: "配置中...",
+        btn_setup_desktop_configured: "✓ 桌面版已配置 | 重新配置",
+        btn_clear_desktop_config: "清除配置",
+        status_clearing: "清除中...",
+
+        toast_desktop_setup_fail: "配置失败",
+
         hint_launch: "一键注入当前 Profile 代理变量并打开原生 shell。直接打 <code>claude</code> 即可开始运行！",
         guide_title: "💡 快捷运行极简指南",
         guide_1: "在上方选项卡选择您常用的命令终端。",
@@ -149,6 +161,11 @@ const i18n = {
         toast_profile_changed: "Profile 已切换",
         toast_launch_failed: "终端启动失败",
         toast_launch_success: "终端已成功启动",
+
+        toast_desktop_setup_success: "✓ Claude Code 桌面版已配置。重启桌面版后生效。验证方式：启动桌面版后发送一条消息，观察 ocgt 日志中的请求记录。",
+        toast_desktop_verify_hint: "验证方式：启动桌面版后发送一条消息，观察 ocgt 日志中的请求记录。",
+        toast_desktop_cleared: "桌面版配置已清除",
+
         toast_history_cleared: "历史记录已清除",
         toast_validation_error: "请检查表单中的错误",
         toast_custom_model_prompt: "请输入自定义模型名称",
@@ -160,7 +177,7 @@ const i18n = {
         term_launched: "已启动终端 ✓",
         // Desktop-only warnings
         warn_desktop_only_launch: "一键启动终端仅在桌面版 app 客户端可用，请在桌面端中点击使用！",
-        warn_desktop_only_env: "该功能仅桌面端可用。当前浏览器模式请复制右侧环境变量手动执行。",
+        warn_desktop_only_env: "桌面版配置接口未初始化，请尝试重启 ocgt",
         warn_desktop_only_folder: "该功能仅在桌面客户端可用。您的配置文件夹通常在您的个人用户目录下的 .ocgt 文件夹中。",
         // Env repair states
         env_repairing: "修复中...",
@@ -210,6 +227,7 @@ const i18n = {
         subtitle_settings: "Manage your upstream API keys, timeouts, and Claude model aliases",
         title_terminal: "One-Click Terminal Activator",
         subtitle_terminal: "Launch pre-configured shell terminals with proxy environments loaded",
+        hint_desktop_config_short: "One-click write ocgt proxy config into Claude Code Desktop",
         title_history: "Traffic Monitoring Radar",
         subtitle_history: "Real-time capture of API logs and metrics received from Claude Code",
         lbl_listen: "Listen Address",
@@ -219,6 +237,7 @@ const i18n = {
         lbl_profile: "Active Profile",
         lbl_model: "Default Model",
         lbl_config_path: "Local Config Path",
+        lbl_desktop_config: "Claude Code Desktop Config",
         lbl_last_updated: "Updated just now",
         btn_open_folder: "Open Directory",
         sett_title: "Easy Configuration Center",
@@ -253,6 +272,16 @@ const i18n = {
         term_shell_type: "Target Shell / Console Type",
         btn_launch_term: "Launch Pre-configured Terminal",
         btn_persistent_env: "Repair System Env (Persistent for future shells)",
+
+        btn_setup_desktop: "Setup Claude Code Desktop",
+
+        status_configuring: "Configuring...",
+        btn_setup_desktop_configured: "✓ Desktop Configured | Reconfigure",
+        btn_clear_desktop_config: "Clear Config",
+        status_clearing: "Clearing...",
+
+        toast_desktop_setup_fail: "Setup failed",
+
         hint_launch: "Injects proxy environment variables and spawns a native shell. Directly run <code>claude</code> to begin!",
         guide_title: "💡 Quick Start Guide",
         guide_1: "Select your preferred shell type in the tabs above.",
@@ -310,6 +339,11 @@ const i18n = {
         toast_profile_changed: "Profile switched",
         toast_launch_failed: "Terminal launch failed",
         toast_launch_success: "Terminal launched successfully",
+
+        toast_desktop_setup_success: "✓ Claude Code Desktop configured. Restart to apply. Verify: send a message and check ocgt logs for request records.",
+        toast_desktop_verify_hint: "Verify: send a message and check ocgt logs for request records.",
+        toast_desktop_cleared: "Desktop configuration cleared",
+
         toast_history_cleared: "History cleared",
         toast_validation_error: "Please check form errors",
         toast_custom_model_prompt: "Enter custom model name",
@@ -319,7 +353,7 @@ const i18n = {
         term_launching: "Launching...",
         term_launched: "Terminal Launched ✓",
         warn_desktop_only_launch: "One-click launch is only available in the desktop app!",
-        warn_desktop_only_env: "Only available in desktop app. Please copy the env variables manually on the right.",
+        warn_desktop_only_env: "Desktop config interface not initialized. Please try restarting ocgt.",
         warn_desktop_only_folder: "Only available in the desktop client. Config is typically under ~/.ocgt directory.",
         env_repairing: "Repairing...",
         env_repaired_hint: "Repaired! Reopen terminals to apply",
@@ -431,6 +465,12 @@ function cacheDom() {
     dom.btnSaveAllConfig = document.getElementById('save-all-config-btn');
     dom.btnInstallEnv = document.getElementById('install-env-btn');
     dom.btnInstallEnvTerminal = document.getElementById('install-env-terminal-btn');
+    dom.btnSetupDesktop = document.getElementById('setup-desktop-btn');
+
+    dom.btnSetupDesktopText = dom.btnSetupDesktop ? dom.btnSetupDesktop.querySelector('span') : null;
+    dom.btnClearDesktop = document.getElementById('clear-desktop-btn');
+    dom.btnGotoDesktopConfig = document.getElementById('goto-desktop-config-btn');
+
     dom.btnToggleVisibility = document.getElementById('toggle-key-visibility');
     dom.settingsForm = document.getElementById('settings-form');
     dom.configActions = document.getElementById('config-actions');
@@ -1328,45 +1368,183 @@ function setupTerminalHandlers() {
     }
 
     // Copy buttons
+
     if (dom.btnCopyEnv) {
+
         dom.btnCopyEnv.addEventListener('click', () => copyText(dom.codeEnv.innerText, dom.btnCopyEnv));
+
     }
+
     if (dom.btnCopyCCSwitch) {
+
         dom.btnCopyCCSwitch.addEventListener('click', () => copyText(dom.codeCCSwitch.innerText, dom.btnCopyCCSwitch));
+
     }
+
+
+
+    // Setup Claude Desktop
+
+    if (dom.btnSetupDesktop) {
+
+        dom.btnSetupDesktop.addEventListener('click', handleSetupDesktop);
+
+    }
+
+    if (dom.btnClearDesktop) {
+        dom.btnClearDesktop.addEventListener('click', handleClearDesktopConfig);
+    }
+
+    checkDesktopConfigStatus();
 }
 
 async function handleLaunchTerminal() {
+
     const app = getWailsApp();
+
     if (!app) {
+
         toast(t('warn_desktop_only_launch'), 'warning');
+
+        return;
+
+    }
+
+    dom.btnLaunchTerminal.disabled = true;
+
+    const originalText = dom.btnLaunchTerminal.innerHTML;
+
+    dom.btnLaunchTerminal.innerHTML = `<span class="status-dot pulse" style="background-color:white;width:6px;height:6px;margin-right:8px;"></span>${t('term_launching')}`;
+
+    try {
+
+        const res = await app.LaunchClaudeTerminal(currentShell, currentLang);
+
+        if (res === 'success') {
+
+            dom.btnLaunchTerminal.innerHTML = t('term_launched');
+
+            dom.btnLaunchTerminal.style.background = 'var(--green)';
+
+            toastI18n('toast_launch_success', 'success');
+
+            setTimeout(() => {
+
+                dom.btnLaunchTerminal.disabled = false;
+
+                dom.btnLaunchTerminal.innerHTML = originalText;
+
+                dom.btnLaunchTerminal.style.background = '';
+
+            }, 2000);
+
+        } else {
+
+            dom.btnLaunchTerminal.disabled = false;
+
+            dom.btnLaunchTerminal.innerHTML = originalText;
+
+            toast(t('toast_launch_failed') + ': ' + res, 'error');
+
+        }
+
+    } catch (err) {
+
+        dom.btnLaunchTerminal.disabled = false;
+
+        dom.btnLaunchTerminal.innerHTML = originalText;
+
+        dom.btnLaunchTerminal.style.background = '';
+
+        console.error('Launch terminal error:', err);
+
+        toast(t('toast_launch_failed') + ': ' + err.message, 'error');
+
+    }
+
+}
+
+
+
+async function handleSetupDesktop() {
+    const app = getWailsApp();
+    if (!app || typeof app.SetupClaudeDesktop !== 'function') {
+        toast(t('warn_desktop_only_env'), 'info');
         return;
     }
-    dom.btnLaunchTerminal.disabled = true;
-    const originalText = dom.btnLaunchTerminal.innerHTML;
-    dom.btnLaunchTerminal.innerHTML = `<span class="status-dot pulse" style="background-color:white;width:6px;height:6px;margin-right:8px;"></span>${t('term_launching')}`;
+
+    dom.btnSetupDesktop.disabled = true;
+    const span = dom.btnSetupDesktopText;
+    if (span) span.textContent = t('status_configuring') || '配置中...';
+
     try {
-        const res = await app.LaunchClaudeTerminal(currentShell, currentLang);
+        const res = await app.SetupClaudeDesktop();
         if (res === 'success') {
-            dom.btnLaunchTerminal.innerHTML = t('term_launched');
-            dom.btnLaunchTerminal.style.background = 'var(--green)';
-            toastI18n('toast_launch_success', 'success');
-            setTimeout(() => {
-                dom.btnLaunchTerminal.disabled = false;
-                dom.btnLaunchTerminal.innerHTML = originalText;
-                dom.btnLaunchTerminal.style.background = '';
-            }, 2000);
+            if (span) span.textContent = t('btn_setup_desktop_configured');
+            dom.btnSetupDesktop.style.background = 'var(--green)';
+            toastI18n('toast_desktop_setup_success', 'success');
+            toastI18n('toast_desktop_verify_hint', 'info');
+            dom.btnSetupDesktop.disabled = false;
         } else {
-            dom.btnLaunchTerminal.disabled = false;
-            dom.btnLaunchTerminal.innerHTML = originalText;
-            toast(t('toast_launch_failed') + ': ' + res, 'error');
+            dom.btnSetupDesktop.disabled = false;
+            if (span) span.textContent = t('btn_setup_desktop');
+            toastI18n('toast_desktop_setup_fail', 'error');
         }
     } catch (err) {
-        dom.btnLaunchTerminal.disabled = false;
-        dom.btnLaunchTerminal.innerHTML = originalText;
-        dom.btnLaunchTerminal.style.background = '';
-        console.error('Launch terminal error:', err);
-        toast(t('toast_launch_failed') + ': ' + err.message, 'error');
+        dom.btnSetupDesktop.disabled = false;
+        if (span) span.textContent = t('btn_setup_desktop');
+        console.error('Setup desktop error:', err);
+        toastI18n('toast_desktop_setup_fail', 'error');
+    }
+}
+
+async function checkDesktopConfigStatus() {
+    const app = getWailsApp();
+    if (!app || typeof app.IsClaudeDesktopConfigured !== 'function') return;
+    try {
+        const configured = await app.IsClaudeDesktopConfigured();
+        const span = dom.btnSetupDesktopText;
+        if (configured) {
+            if (span) span.textContent = t('btn_setup_desktop_configured');
+            dom.btnSetupDesktop.style.background = 'var(--green)';
+        } else {
+            if (span) span.textContent = t('btn_setup_desktop');
+            dom.btnSetupDesktop.style.background = '';
+        }
+    } catch (err) {
+        console.error('Check desktop config error:', err);
+    }
+}
+
+async function handleClearDesktopConfig() {
+    const app = getWailsApp();
+    if (!app || typeof app.ClearClaudeDesktop !== 'function') {
+        toast(t('warn_desktop_only_env'), 'info');
+        return;
+    }
+
+    if (dom.btnClearDesktop) dom.btnClearDesktop.disabled = true;
+    const originalText = dom.btnClearDesktop ? dom.btnClearDesktop.textContent : '';
+    if (dom.btnClearDesktop) dom.btnClearDesktop.textContent = t('status_clearing') || '清除中...';
+
+    try {
+        const res = await app.ClearClaudeDesktop();
+        if (res === 'success') {
+            const span = dom.btnSetupDesktopText;
+            if (span) span.textContent = t('btn_setup_desktop');
+            dom.btnSetupDesktop.style.background = '';
+            toastI18n('toast_desktop_cleared', 'success');
+        } else {
+            toastI18n('toast_desktop_setup_fail', 'error');
+        }
+    } catch (err) {
+        console.error('Clear desktop config error:', err);
+        toastI18n('toast_desktop_setup_fail', 'error');
+    } finally {
+        if (dom.btnClearDesktop) {
+            dom.btnClearDesktop.disabled = false;
+            dom.btnClearDesktop.textContent = originalText;
+        }
     }
 }
 
@@ -1540,6 +1718,16 @@ function setupDashboardHandlers() {
                 console.error('OpenConfigLocation error:', e);
                 toast(t('err_open_folder_generic') + ': ' + e.message, 'error');
             }
+        });
+    }
+
+    if (dom.btnGotoDesktopConfig) {
+        dom.btnGotoDesktopConfig.addEventListener('click', () => {
+            const terminalNav = document.getElementById('btn-nav-terminal');
+            if (terminalNav) terminalNav.click();
+            setTimeout(() => {
+                handleSetupDesktop();
+            }, 300);
         });
     }
 }

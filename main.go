@@ -1,20 +1,37 @@
 package main
 
 import (
+
+	"bytes"
+
 	"context"
+
 	"embed"
+
 	"encoding/json"
+
 	"errors"
+
 	"flag"
+
 	"fmt"
+
 	"io"
+
 	"log"
+
 	"net/http"
+
 	"os"
+
 	"os/exec"
-	"os/signal"
+
+	"os/signal"
+
 	"sort"
+
 	"strings"
+
 	"time"
 
 	"github.com/ethan-blue/open-code-go-tools/internal/config"
@@ -89,7 +106,13 @@ func runCLI(args []string) error {
 	case "claude-env":
 		return cmdClaudeEnv(args[1:])
 	case "ccswitch":
+
 		return cmdCCSwitch(args[1:])
+
+	case "claude-desktop-env":
+
+		return cmdClaudeDesktopEnv(args[1:])
+
 	case "key":
 		return cmdKey(args[1:])
 	case "version":
@@ -237,6 +260,68 @@ func cmdClaudeEnv(args []string) error {
 	}
 	printEnv(env, *shell)
 	return nil
+}
+
+func cmdClaudeDesktopEnv(args []string) error {
+	fs := flag.NewFlagSet("claude-desktop-env", flag.ExitOnError)
+	configPath := fs.String("config", "", "config path")
+	profileName := fs.String("profile", "", "profile name")
+	baseURL := fs.String("base-url", "http://127.0.0.1:8787", "local proxy base URL")
+	apply := fs.Bool("apply", false, "write directly to ~/.claude/settings.json instead of printing")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	_, _, name, err := selectedProfile(*configPath, *profileName)
+	if err != nil {
+		return err
+	}
+
+	envConfig := map[string]string{
+		"ANTHROPIC_BASE_URL":       *baseURL,
+		"ANTHROPIC_API_KEY":        "ocgt-local-proxy",
+		"ANTHROPIC_CUSTOM_HEADERS": "X-Ocgt-Profile: " + name,
+		"OCGT_PROFILE":             name,
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString("{\n  \"env\": {\n")
+	first := true
+	for k, v := range envConfig {
+		if !first {
+			buf.WriteString(",\n")
+		}
+		fmt.Fprintf(&buf, "    %q: %q", k, v)
+		first = false
+	}
+	buf.WriteString("\n  }\n}\n")
+
+	if *apply {
+
+		if err := syncClaudeSettings(envConfig); err != nil {
+
+			return fmt.Errorf("failed to apply Claude Code desktop settings: %w", err)
+
+		}
+
+		fmt.Println("✓ Claude Code desktop settings written to ~/.claude/settings.json")
+
+		fmt.Println("  Restart Claude Code desktop app for changes to take effect.")
+
+		return nil
+
+	}
+
+
+
+	fmt.Print(buf.String())
+
+	fmt.Println("# Paste the above JSON block into ~/.claude/settings.json under the \"env\" key.")
+
+	fmt.Println("# Or use --apply to write it automatically (merges with existing settings).")
+
+	return nil
+
 }
 
 func cmdCCSwitch(args []string) error {
@@ -436,9 +521,13 @@ Commands:
   serve         run the local proxy (CLI mode)
   profiles      list configured profiles
   models        show local aliases or query official /v1/models with --remote
-  claude-env    print environment variables for Claude Code
-  ccswitch      print a CC Switch-friendly provider JSON snippet
-  key           save or show OPENCODE_GO_API_KEY
+  claude-env           print environment variables for Claude Code CLI
+
+  claude-desktop-env   print/apply ~/.claude/settings.json for Claude Code Desktop
+
+  ccswitch             print a CC Switch-friendly provider JSON snippet
+
+  key                  save or show OPENCODE_GO_API_KEY
   version       print version
 
 Typical flow:

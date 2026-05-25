@@ -154,6 +154,16 @@
                             </div>
                             <button class="btn-primary btn-open-config" id="open-config-btn" data-i18n="btn_open_folder" aria-label="Open config folder">打开所在文件夹</button>
                         </div>
+                        <div class="stat-card span-all stat-card-config-path">
+                            <div class="stat-card-config-inner">
+                                <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></div>
+                                <div class="stat-info flex-fill">
+                                    <span class="stat-label" data-i18n="lbl_desktop_config">Claude Code 桌面版配置</span>
+                                    <h3 class="stat-value mono path-text" data-i18n="hint_desktop_config_short">一键将 ocgt 代理配置写入 Claude Code 桌面版</h3>
+                                </div>
+                            </div>
+                            <button class="btn-primary btn-open-config" id="goto-desktop-config-btn" data-i18n="btn_setup_desktop" aria-label="Configure Claude Code Desktop">配置 Claude Code 桌面版</button>
+                        </div>
                     </div>
                 </section>
 
@@ -322,12 +332,30 @@
                                 </div>
 
                                 <div class="launch-action-zone">
+
                                     <button class="btn-primary btn-launch-terminal" id="launch-terminal-btn" data-i18n="btn_launch_term">
+
                                         <svg class="launch-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+
                                         一键拉起配置终端 (Launch)
+
                                     </button>
+
                                     <button class="btn-secondary full-action-btn" id="install-env-terminal-btn" type="button" data-i18n="btn_persistent_env">修复以后所有新终端环境变量</button>
+
+                                    <button class="btn-secondary full-action-btn" id="setup-desktop-btn" type="button">
+
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:middle;margin-right:6px;"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+
+                                        <span data-i18n="btn_setup_desktop">配置 Claude Code 桌面版</span>
+
+                                    </button>
+                                    <button class="btn-secondary full-action-btn" id="clear-desktop-btn" type="button" style="border-color:var(--red);color:var(--red);">
+                                        <span data-i18n="btn_clear_desktop_config">清除配置</span>
+                                    </button>
+
                                     <p class="hint" data-i18n="hint_launch">一键注入当前 Profile 代理变量并打开原生 shell。直接打 <code>claude</code> 即可开始运行！</p>
+
                                 </div>
 
                                 <div class="guide-box">
