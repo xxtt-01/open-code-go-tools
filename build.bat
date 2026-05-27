@@ -32,13 +32,25 @@ set LDFLAGS=-X github.com/ethan-blue/open-code-go-tools/internal/version.Version
 
 echo Building with ldflags: !LDFLAGS!
 
-where wails >nul 2>nul
-if errorlevel 1 (
-    echo Wails CLI not found in PATH, using go run fallback...
-    go run github.com/wailsapp/wails/v2/cmd/wails@v2.12.0 build -ldflags "!LDFLAGS!"
+REM Check known wails paths first, then PATH
+set WAILS_BIN=
+if exist "D:\Project\Go_Project\bin\wails.exe" (
+    set WAILS_BIN=D:\Project\Go_Project\bin\wails.exe
 ) else (
-    wails build -ldflags "!LDFLAGS!"
+    where wails >nul 2>nul
+    if not errorlevel 1 (
+        set WAILS_BIN=wails
+    )
 )
+
+if "!WAILS_BIN!"=="" (
+    echo Wails CLI not found. Please install wails or add it to PATH.
+    echo   Install: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+    exit /b 1
+)
+
+echo Using Wails: !WAILS_BIN!
+"!WAILS_BIN!" build -ldflags "!LDFLAGS!"
 
 if errorlevel 1 (
     echo Build failed
@@ -47,6 +59,6 @@ if errorlevel 1 (
 
 echo.
 echo Build complete!
-echo Output: build\bin\ocgt_v!VERSION!.exe
+echo Output: build\bin\ocgt.exe
 
 endlocal

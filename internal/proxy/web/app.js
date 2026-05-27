@@ -1,4 +1,4 @@
-// ── ocgt Web Dashboard v0.1.9 ──
+// ── ocgt Web Dashboard v0.2.1 ──
 // Premium polished web control panel
 
 let API_BASE = 'http://127.0.0.1:8787';
@@ -118,6 +118,15 @@ async function waitForProxyReady(timeoutMs = 2500) {
     return false;
 }
 
+async function isProxyHealthy() {
+    try {
+        const resp = await apiFetch('/healthz', { cache: 'no-store' }, 1200);
+        return resp.ok;
+    } catch (err) {
+        return false;
+    }
+}
+
 function setProxyConnectionState(state) {
     if (!statusText) return;
     const texts = { connecting: '代理连接中', online: '代理已连接', offline: '代理未连接' };
@@ -163,7 +172,11 @@ async function loadStatus() {
         renderCCSwitchCode();
         setProxyConnectionState('online');
         return true;
-    } catch (err) { console.error('Error fetching status:', err); setProxyConnectionState('offline'); return false; }
+    } catch (err) {
+        console.error('Error fetching status:', err);
+        setProxyConnectionState(await isProxyHealthy() ? 'online' : 'offline');
+        return false;
+    }
 }
 
 function setSelectValue(selectEl, value) {
@@ -295,14 +308,15 @@ function setupEventHandlers() {
 
         if (window.go && window.go.main && window.go.main.App) {
             try {
-                const res = await window.go.main.App.SaveProfileConfig(pName, key, defModel, sonnet, haiku, opus, timeoutSeconds, thinkingBudget);
+                const claudeEnvJSON = JSON.stringify(systemStatus && systemStatus.claude_env ? systemStatus.claude_env : {});
+                const res = await window.go.main.App.SaveProfileConfig(pName, key, defModel, sonnet, haiku, opus, timeoutSeconds, thinkingBudget, '', '', '', claudeEnvJSON);
                 if (res === "success") {
                     if (inputCloseBehavior && window.go.main.App.SavePreferences) {
                         const prefs = normalizeCloseBehavior(inputCloseBehavior.value);
                         await window.go.main.App.SavePreferences(prefs);
                     }
                     setButtonState(btnSaveAllConfig, 'success');
-                    toast('配置已保存并热重载', 'success');
+                    toast('配置已保存并立即生效', 'success');
                     await loadStatus(); await loadProfiles();
                     setTimeout(() => setButtonState(btnSaveAllConfig, 'idle'), 1500);
                 } else { setButtonState(btnSaveAllConfig, 'idle'); toast('保存失败: ' + res, 'error'); }
@@ -315,7 +329,7 @@ function setupEventHandlers() {
                         model_aliases: { sonnet, haiku, opus }, request_timeout_seconds: timeoutNumber,
                         max_thinking_budget_tokens: Number(thinkingBudget) })
                 });
-                if (resp.ok) { setButtonState(btnSaveAllConfig, 'success'); toast('配置已保存并热重载', 'success'); await loadStatus(); await loadProfiles(); setTimeout(() => setButtonState(btnSaveAllConfig, 'idle'), 1500); }
+                if (resp.ok) { setButtonState(btnSaveAllConfig, 'success'); toast('配置已保存并立即生效', 'success'); await loadStatus(); await loadProfiles(); setTimeout(() => setButtonState(btnSaveAllConfig, 'idle'), 1500); }
                 else { setButtonState(btnSaveAllConfig, 'idle'); toast('保存失败', 'error'); }
             } catch (err) { console.error('Fallback save error:', err); setButtonState(btnSaveAllConfig, 'idle'); }
         }
@@ -460,9 +474,9 @@ function renderEnvCode() {
         ? { powershell: `$env:MAX_THINKING_TOKENS = "0"\n$env:CLAUDE_CODE_DISABLE_THINKING = "1"`, bash: `export MAX_THINKING_TOKENS="0"\nexport CLAUDE_CODE_DISABLE_THINKING="1"`, cmd: `set MAX_THINKING_TOKENS=0\nset CLAUDE_CODE_DISABLE_THINKING=1` }
         : { powershell: `$env:MAX_THINKING_TOKENS = "${thinkingBudget}"`, bash: `export MAX_THINKING_TOKENS="${thinkingBudget}"`, cmd: `set MAX_THINKING_TOKENS=${thinkingBudget}` };
     const templates = {
-        powershell: `$env:ANTHROPIC_BASE_URL = "http://${listen}"\n$env:ANTHROPIC_API_KEY = "ocgt-local-proxy"\n$env:ANTHROPIC_CUSTOM_HEADERS = "X-Ocgt-Profile: ${profile}"\nRemove-Item Env:ANTHROPIC_MODEL -ErrorAction SilentlyContinue\n${thinkingLines.powershell}`,
-        bash: `export ANTHROPIC_BASE_URL="http://${listen}"\nexport ANTHROPIC_API_KEY="ocgt-local-proxy"\nexport ANTHROPIC_CUSTOM_HEADERS="X-Ocgt-Profile: ${profile}"\nunset ANTHROPIC_MODEL\n${thinkingLines.bash}`,
-        cmd: `set ANTHROPIC_BASE_URL=http://${listen}\nset ANTHROPIC_API_KEY=ocgt-local-proxy\nset ANTHROPIC_CUSTOM_HEADERS=X-Ocgt-Profile:${profile}\nset ANTHROPIC_MODEL=\n${thinkingLines.cmd}`
+        powershell: `$env:ANTHROPIC_BASE_URL = "http://${listen}"\n$env:ANTHROPIC_API_KEY = "ocgt-local-proxy"\n$env:ANTHROPIC_CUSTOM_HEADERS = "X-Ocgt-Profile: ${profile}, X-Ocgt-Client: claude-code-cli"\nRemove-Item Env:ANTHROPIC_MODEL -ErrorAction SilentlyContinue\n${thinkingLines.powershell}`,
+        bash: `export ANTHROPIC_BASE_URL="http://${listen}"\nexport ANTHROPIC_API_KEY="ocgt-local-proxy"\nexport ANTHROPIC_CUSTOM_HEADERS="X-Ocgt-Profile: ${profile}, X-Ocgt-Client: claude-code-cli"\nunset ANTHROPIC_MODEL\n${thinkingLines.bash}`,
+        cmd: `set ANTHROPIC_BASE_URL=http://${listen}\nset ANTHROPIC_API_KEY=ocgt-local-proxy\nset ANTHROPIC_CUSTOM_HEADERS=X-Ocgt-Profile: ${profile}, X-Ocgt-Client: claude-code-cli\nset ANTHROPIC_MODEL=\n${thinkingLines.cmd}`
     };
     codeEnv.innerText = templates[currentShell] || templates.powershell;
 }
@@ -505,7 +519,7 @@ function statusBadge(code) {
 function setButtonState(btn, state) {
     if (state === 'saving') { btn.disabled = true; btn.textContent = '保存中...'; btn.style.opacity = '0.7'; }
     else if (state === 'success') { btn.disabled = true; btn.classList.add('btn-success'); btn.textContent = '已保存 ✓'; btn.style.opacity = '1'; }
-    else { btn.disabled = false; btn.classList.remove('btn-success'); btn.textContent = '保存并热重载配置'; btn.style.opacity = '1'; }
+    else { btn.disabled = false; btn.classList.remove('btn-success'); btn.textContent = '保存并应用配置'; btn.style.opacity = '1'; }
 }
 
 function copyText(text, btn) {

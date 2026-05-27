@@ -18,7 +18,7 @@ type blockState struct {
 	open  bool
 }
 
-func streamOpenAIAsAnthropic(w http.ResponseWriter, body io.Reader, model string, onToolCall func(id, reasoning string)) {
+func streamOpenAIAsAnthropic(w http.ResponseWriter, body io.Reader, model string, inputTokens int, onToolCall func(id, reasoning string)) int {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -29,14 +29,14 @@ func streamOpenAIAsAnthropic(w http.ResponseWriter, body io.Reader, model string
 
 	sendSSE(w, "message_start", map[string]any{
 		"type":    "message_start",
-		"message": map[string]any{"id": msgID, "type": "message", "role": "assistant", "model": model, "content": []any{}, "stop_reason": nil, "stop_sequence": nil, "usage": map[string]int{"input_tokens": 0, "output_tokens": 0}},
+		"message": map[string]any{"id": msgID, "type": "message", "role": "assistant", "model": model, "content": []any{}, "stop_reason": nil, "stop_sequence": nil, "usage": map[string]int{"input_tokens": inputTokens, "output_tokens": 0}},
 	})
 	if flusher != nil {
 		flusher.Flush()
 	}
 
 	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	scanner.Buffer(make([]byte, 0, 256*1024), 16*1024*1024)
 
 	var curBlock *blockState
 	var blockIdx int
@@ -104,13 +104,16 @@ func streamOpenAIAsAnthropic(w http.ResponseWriter, body io.Reader, model string
 		if chunk.Usage.CompletionTokens > 0 {
 			outputTokens = chunk.Usage.CompletionTokens
 		}
+		if chunk.Usage.PromptTokens > 0 {
+			inputTokens = chunk.Usage.PromptTokens
+		}
 		if len(chunk.Choices) == 0 {
 			continue
 		}
 		choice := chunk.Choices[0]
 		delta := choice.Delta
 
-		rc := reasoningText(delta.ReasoningContent, delta.ThinkingContent, delta.Thinking, delta.Reasoning, delta.ReasoningDetails)
+		rc := reasoningTextRaw(delta.ReasoningContent, delta.ThinkingContent, delta.Thinking, delta.Reasoning, delta.ReasoningDetails)
 		if rc != "" {
 			accumulatedReasoning.WriteString(rc)
 			openBlock("thinking")
@@ -203,6 +206,10 @@ func streamOpenAIAsAnthropic(w http.ResponseWriter, body io.Reader, model string
 
 	closeCurrentBlock()
 
+	// Send final message delta with usage statistics
+	// Note: output_tokens is tracked during streaming, but cache-related fields
+	// (cache_creation_input_tokens, cache_read_input_tokens) are not available
+	// from OpenAI-compatible endpoints. This is a protocol limitation.
 	sendSSE(w, "message_delta", map[string]any{
 		"type": "message_delta",
 		"delta": map[string]any{
@@ -215,6 +222,7 @@ func streamOpenAIAsAnthropic(w http.ResponseWriter, body io.Reader, model string
 	if flusher != nil {
 		flusher.Flush()
 	}
+	return outputTokens
 }
 
 func streamAnthropicMessage(w http.ResponseWriter, message map[string]any) {

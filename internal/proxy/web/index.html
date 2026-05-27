@@ -27,7 +27,7 @@
                     </svg>
                 </div>
                 <div class="brand-text">
-                    <h1>ocgt <span class="badge">v0.1.9</span></h1>
+                    <h1>ocgt <span class="badge">v0.2.1</span></h1>
                     <p>Claude Code OpenCode Go Proxy Companion</p>
                 </div>
             </div>
@@ -223,11 +223,11 @@
                         </div>
                     </div>
 
-                    <button class="btn btn-primary" id="save-all-config-btn" style="width: 100%; margin-top: 0.5rem;">保存并热重载配置</button>
+                    <button class="btn btn-primary" id="save-all-config-btn" style="width: 100%; margin-top: 0.5rem;">保存并应用配置</button>
                     <button class="btn btn-secondary" id="install-env-btn" style="width: 100%; margin-top: 0.75rem;">一键修复 Claude Code 系统环境变量</button>
                     <button class="btn btn-secondary" id="about-app-btn" style="width: 100%; margin-top: 0.5rem;">关于 ocgt (About App)</button>
-                    <p class="input-tip" style="text-align: center;">保存后同步更新 config.json、热重载 Go 服务；思考强度会按模型能力转换，不支持的模型不会发送额外 thinking 字段</p>
-                    <p class="input-tip" style="text-align: center; color: var(--primary); font-weight: 600; margin-top: 8px;">💡 提示：在"终端启动"页中只需选择并一键启动任意一种您习惯的命令行窗口即可，无需重复配置多种终端。</p>
+                    <p class="input-tip" style="text-align: center;">保存后将立即更新 config.json 并实时应用。思考强度会根据模型能力自动适配，不支持的模型将不发送额外 thinking 字段。</p>
+                    <p class="input-tip" style="text-align: center; color: var(--primary); font-weight: 600; margin-top: 8px;">💡 提示：在“终端激活”栏中选择您的 Shell 一键复制命令或激活，即可开箱即用，无需在此做重复修改。</p>
                 </div>
             </div>
 
@@ -343,7 +343,7 @@ Remove-Item Env:ANTHROPIC_MODEL -ErrorAction SilentlyContinue</code></pre>
                 </svg>
             </div>
             <h3 class="modal-title">ocgt</h3>
-            <div class="about-version-badge">v0.1.9</div>
+            <div class="about-version-badge">v0.2.1</div>
             <p class="modal-msg">专为 Claude Code 与 OpenCode Go 打造的极简桌面控制面板与代理</p>
             <div class="about-meta">
                 <div class="about-meta-row"><span>作者</span><span>ethan-blue</span></div>

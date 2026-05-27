@@ -92,7 +92,7 @@ ocgt version    # 查看版本
 
 ## 🛠️ 构建
 
-需要 Go 1.22+，Wails v2.12：
+需要 Go 1.22+，Wails v2.12（GUI 构建必须满足 Go 1.22；Go 1.21 无法编译 Wails v2.12）：
 
 ```powershell
 go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
@@ -100,11 +100,29 @@ wails dev          # 开发模式
 .\build.bat        # 生产构建
 ```
 
----
-
-## 📄 许可证
-
-MIT License
-
-## 邀请链接
+---
+
+## ⚠️ 已知限制
+
+### Usage 统计不完整
+
+通过 ocgt 代理时，`used_percentage` 和 usage 统计可能不准确，原因如下：
+
+1. **协议差异**: OpenAI Chat Completions API 不支持 Anthropic 的 prompt caching 字段
+   - `cache_creation_input_tokens` → 始终为 0
+   - `cache_read_input_tokens` → 始终为 0
+
+2. **上游限制**: 非Anthropic 模型 (kimi/deepseek/qwen等) 不返回 prompt caching 数据
+
+3. **影响**: `used_percentage = (input + cache_creation + cache_read) / window_size` 计算结果偏低
+
+**这不是 bug，而是架构限制**。如需完整的 usage 统计，请使用 Anthropic 原生 API 或支持 prompt caching 的上游。
+
+---
+
+## 📄 许可证
+
+MIT License
+
+## 邀请链接
 可以走此链接订购go计划：https://opencode.ai/go?ref=RRWQDE4CWW

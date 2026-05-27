@@ -1,7 +1,6 @@
 package main
 
 import (
-
 	"bytes"
 
 	"context"
@@ -26,8 +25,8 @@ import (
 
 	"os/exec"
 
-	"os/signal"
-
+	"os/signal"
+
 	"sort"
 
 	"strings"
@@ -80,7 +79,7 @@ func runWailsGui() {
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: "github.com.ethan-blue.open-code-go-tools.ocgt",
 			OnSecondInstanceLaunch: func(_ options.SecondInstanceData) {
-				app.showMainWindow()
+				app.showMainWindow(false)
 			},
 		},
 		Bind: []interface{}{
@@ -311,8 +310,6 @@ func cmdClaudeDesktopEnv(args []string) error {
 		return nil
 
 	}
-
-
 
 	fmt.Print(buf.String())
 

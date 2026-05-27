@@ -1,6 +1,8 @@
 package config
 
 import (
+	"encoding/json"
+	"os"
 	"testing"
 	"time"
 )
@@ -226,5 +228,60 @@ func TestAPIKeyValue(t *testing.T) {
 	p = Profile{APIKey: "", APIKeyEnv: ""}
 	if got := p.APIKeyValue(); got != "" {
 		t.Fatalf("expected empty, got %q", got)
+	}
+}
+
+func TestSavePreservesUnknownFields(t *testing.T) {
+	// Create a temporary file with unknown fields
+	tmpFile := t.TempDir() + "/config.json"
+	initial := `{
+  "version": 1,
+  "listen": "127.0.0.1:8787",
+  "upstream": "https://example.com",
+  "request_timeout_seconds": 300,
+  "active_profile": "test",
+  "profiles": {
+    "test": {"api_key": "key1"}
+  },
+  "custom_field": "should be preserved",
+  "another_custom": {"nested": true}
+}`
+	if err := os.WriteFile(tmpFile, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Load and save the config
+	cfg, err := Load(tmpFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Save(tmpFile); err != nil {
+		t.Fatal(err)
+	}
+
+	// Read the saved file and check that unknown fields are preserved
+	data, err := os.ReadFile(tmpFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+
+	if raw["custom_field"] != "should be preserved" {
+		t.Fatalf("custom_field should be preserved, got %v", raw["custom_field"])
+	}
+	customObj, ok := raw["another_custom"].(map[string]any)
+	if !ok {
+		t.Fatalf("another_custom should be an object, got %T", raw["another_custom"])
+	}
+	if customObj["nested"] != true {
+		t.Fatalf("another_custom.nested should be true, got %v", customObj["nested"])
+	}
+
+	// Verify known fields are also present
+	if raw["listen"] != "127.0.0.1:8787" {
+		t.Fatalf("listen should be preserved, got %v", raw["listen"])
 	}
 }

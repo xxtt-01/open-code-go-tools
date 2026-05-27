@@ -118,7 +118,7 @@ func (a *App) setupSystray() {
 	})
 }
 
-func (a *App) showMainWindow() {
+func (a *App) showMainWindow(center bool) {
 	if a.ctx == nil {
 		return
 	}
@@ -126,7 +126,9 @@ func (a *App) showMainWindow() {
 	if wailsruntime.WindowIsMinimised(a.ctx) {
 		wailsruntime.WindowUnminimise(a.ctx)
 	}
-	wailsruntime.WindowCenter(a.ctx)
+	if center {
+		wailsruntime.WindowCenter(a.ctx)
+	}
 }
 
 func (a *App) hideMainWindow() {
@@ -149,11 +151,11 @@ func (a *App) actionLoop() {
 	for action := range a.actionCh {
 		switch action {
 		case trayActionShow:
-			a.showMainWindow()
+			a.showMainWindow(false)
 		case trayActionHide:
 			a.hideMainWindow()
 		case trayActionSettings:
-			a.showMainWindow()
+			a.showMainWindow(false)
 			if a.ctx != nil {
 				wailsruntime.EventsEmit(a.ctx, "nav-to-settings")
 			}
@@ -196,6 +198,11 @@ func (a *App) startup(ctx context.Context) {
 			log.Println("[GUI proxy] server creation error:", err)
 			return
 		}
+		if prefs, err := preferences.Load(""); err == nil {
+			srv.ConfigureHistoryLog(prefs.LogEnabled, prefs.LogDirectory, prefs.LogRetentionDays)
+		} else {
+			log.Println("[GUI proxy] preferences load error:", err)
+		}
 		srv.SetConfigPath(defaultPath)
 		a.srv = srv
 
@@ -214,7 +221,7 @@ func (a *App) startup(ctx context.Context) {
 func (a *App) domReady(ctx context.Context) {
 	a.ctx = ctx
 	// Force the main window to be shown, unminimized, centered and focused on startup
-	a.showMainWindow()
+	a.showMainWindow(true)
 
 	// Initialize the system tray after the Wails WebView2 is fully loaded.
 	// A short delay prevents Windows message pump race conditions on startup.
@@ -271,8 +278,8 @@ func (a *App) localProxyAuthToken() string {
 	return ""
 }
 
-// SaveProfileConfig saves API key, model aliases, timeout, and thinking settings.
-func (a *App) SaveProfileConfig(profileName, apiKey, defaultModel, sonnetAlias, haikuAlias, opusAlias, timeoutSeconds, thinkingBudgetTokens string) string {
+// SaveProfileConfig saves API key, model aliases, proxy, timeout, and thinking settings.
+func (a *App) SaveProfileConfig(profileName, apiKey, defaultModel, sonnetAlias, haikuAlias, opusAlias, timeoutSeconds, thinkingBudgetTokens, upstream, rateLimitPerSecond, rateLimitBurst, claudeEnvJSON string) string {
 	// 1. Resolve path
 	path, err := config.DefaultPath()
 	if err != nil {
@@ -316,6 +323,36 @@ func (a *App) SaveProfileConfig(profileName, apiKey, defaultModel, sonnetAlias, 
 		}
 		cfg.MaxThinkingBudgetTokens = budget
 	}
+	if strings.TrimSpace(upstream) != "" {
+		cfg.Upstream = strings.TrimSpace(upstream)
+	}
+	if rateLimitPerSecond != "" {
+		perSecond, err := strconv.Atoi(rateLimitPerSecond)
+		if err != nil {
+			return "rate limit per second must be a number"
+		}
+		if perSecond < 1 || perSecond > 10000 {
+			return "rate limit per second must be between 1 and 10000"
+		}
+		cfg.RateLimitPerSecond = perSecond
+	}
+	if rateLimitBurst != "" {
+		burst, err := strconv.Atoi(rateLimitBurst)
+		if err != nil {
+			return "rate limit burst must be a number"
+		}
+		if burst < 1 || burst > 100000 {
+			return "rate limit burst must be between 1 and 100000"
+		}
+		cfg.RateLimitBurst = burst
+	}
+	if strings.TrimSpace(claudeEnvJSON) != "" {
+		claudeEnv := map[string]string{}
+		if err := json.Unmarshal([]byte(claudeEnvJSON), &claudeEnv); err != nil {
+			return "Claude env template must be a JSON object with string values"
+		}
+		cfg.ClaudeEnv = claudeEnv
+	}
 	if err := cfg.Validate(); err != nil {
 		return "validation error: " + err.Error()
 	}
@@ -329,38 +366,51 @@ func (a *App) SaveProfileConfig(profileName, apiKey, defaultModel, sonnetAlias, 
 	if a.srv != nil {
 		a.srv.ApplyConfig(cfg)
 	}
-	if err := syncClaudeSettings(a.claudeCodeEnv()); err != nil {
-		return "sync Claude settings error: " + err.Error()
+	if errStr := a.SyncConfiguredIntegrations(); errStr != "success" {
+		return errStr
 	}
 
+	return "success"
+}
+
+func (a *App) SyncConfiguredIntegrations() string {
+	var errs []string
+	if a.IsSystemEnvConfigured() {
+		if errStr := a.InstallClaudeUserEnv(); errStr != "success" {
+			errs = append(errs, "sync CLI error: "+errStr)
+		}
+	}
+	if a.IsClaudeDesktopConfigured() {
+		if errStr := a.SetupClaudeDesktop(); errStr != "success" {
+			errs = append(errs, "sync Claude Code settings error: "+errStr)
+		}
+	}
+	if a.IsVSCodeConfigured() {
+		if errStr := a.InstallVSCodeEnv(); errStr != "success" {
+			errs = append(errs, "sync VS Code error: "+errStr)
+		}
+	}
+	if a.IsClaudeDesktopAppConfigured() {
+		if errStr := a.SetupClaudeDesktopApp(); errStr != "success" {
+			errs = append(errs, "sync Claude Desktop app error: "+errStr)
+		}
+	}
+	if len(errs) > 0 {
+		return strings.Join(errs, "; ")
+	}
 	return "success"
 }
 
 // InstallClaudeUserEnv persists Claude Code environment variables for new shells.
 func (a *App) InstallClaudeUserEnv() string {
 
-	env := a.claudeCodeEnv()
+	env := a.claudeCodeEnvForClient("claude-code-cli")
 
-
-
-	for _, name := range legacyClaudeEnvNames() {
-
-		if err := unsetUserEnvironment(name); err != nil {
-
-			return "unset " + name + " error: " + err.Error()
-
-		}
-
+	if err := unsetUserEnvironmentBatch(legacyClaudeEnvNames()); err != nil {
+		return "unset environment batch error: " + err.Error()
 	}
-
-	for name, value := range env {
-
-		if err := setUserEnvironment(name, value); err != nil {
-
-			return "set " + name + " error: " + err.Error()
-
-		}
-
+	if err := setUserEnvironmentBatch(env); err != nil {
+		return "set environment batch error: " + err.Error()
 	}
 
 	if err := syncClaudeSettings(env); err != nil {
@@ -372,8 +422,6 @@ func (a *App) InstallClaudeUserEnv() string {
 	return "success"
 
 }
-
-
 
 // SetupClaudeDesktop writes the ocgt proxy env vars into ~/.claude/settings.json
 
@@ -383,7 +431,7 @@ func (a *App) InstallClaudeUserEnv() string {
 
 func (a *App) SetupClaudeDesktop() string {
 
-	env := a.claudeCodeEnv()
+	env := a.claudeCodeEnvForClient("claude-app")
 
 	if err := syncClaudeSettings(env); err != nil {
 
@@ -394,7 +442,6 @@ func (a *App) SetupClaudeDesktop() string {
 	return "success"
 
 }
-
 
 func (a *App) IsClaudeDesktopConfigured() bool {
 	home, err := os.UserHomeDir()
@@ -427,10 +474,23 @@ func (a *App) ClearClaudeDesktop() string {
 	}
 	return "success"
 }
+func claudeCustomHeaders(profile, client string) string {
+	if client != "" {
+		return "X-Ocgt-Profile: " + profile + ", X-Ocgt-Client: " + client
+	}
+	return "X-Ocgt-Profile: " + profile
+}
+
 func (a *App) claudeCodeEnv() map[string]string {
+	return a.claudeCodeEnvForClient("")
+}
+
+func (a *App) claudeCodeEnvForClient(client string) map[string]string {
 	listenAddr := a.GetListenAddress()
 	activeProfile := "opencode-go"
 	thinkingBudget := config.DefaultMaxThinkingBudgetTokens
+	var activeProf config.Profile
+	claudeEnv := map[string]string{}
 
 	path, err := config.DefaultPath()
 	if err == nil {
@@ -438,17 +498,31 @@ func (a *App) claudeCodeEnv() map[string]string {
 		if err == nil {
 			activeProfile = cfg.ActiveProfile
 			thinkingBudget = cfg.ThinkingBudgetTokens()
+			if p, ok := cfg.Profiles[activeProfile]; ok {
+				activeProf = p
+			}
+			for key, value := range cfg.ClaudeEnv {
+				claudeEnv[key] = value
+			}
 		}
 	}
 
-	env := map[string]string{
-		"ANTHROPIC_BASE_URL":       "http://" + listenAddr,
-		"ANTHROPIC_API_KEY":        "ocgt-local-proxy",
-		"ANTHROPIC_CUSTOM_HEADERS": "X-Ocgt-Profile: " + activeProfile,
-		"OCGT_PROFILE":             activeProfile,
+	if len(claudeEnv) == 0 {
+		claudeEnv = config.DefaultClaudeEnv(activeProf)
 	}
+	env := map[string]string{}
+	for key, value := range claudeEnv {
+		env[key] = value
+	}
+	env["ANTHROPIC_BASE_URL"] = "http://" + listenAddr
+	env["ANTHROPIC_CUSTOM_HEADERS"] = claudeCustomHeaders(activeProfile, client)
+	env["OCGT_PROFILE"] = activeProfile
+
 	if token := a.localProxyAuthToken(); token != "" {
 		env["ANTHROPIC_AUTH_TOKEN"] = token
+		delete(env, "ANTHROPIC_API_KEY")
+	} else {
+		env["ANTHROPIC_API_KEY"] = "ocgt-local-proxy"
 	}
 	applyClaudeThinkingEnv(env, thinkingBudget)
 	return env
@@ -537,48 +611,74 @@ func (a *App) LaunchClaudeTerminal(shell string, lang string) string {
 		// SECURITY: Env vars are passed via cmd.Env (child process inherits them).
 		// Shell scripts reference $env:VAR (PowerShell) or %VAR% (CMD) instead of
 		// interpolating values into strings — prevents command injection.
-		env := []string{
-			fmt.Sprintf("ANTHROPIC_BASE_URL=%s", baseURL),
-			"ANTHROPIC_API_KEY=ocgt-local-proxy",
-			fmt.Sprintf("ANTHROPIC_CUSTOM_HEADERS=X-Ocgt-Profile: %s", activeProfile),
-			fmt.Sprintf("MAX_THINKING_TOKENS=%s", thinkingTokenValue),
-			fmt.Sprintf("OCGT_DEFAULT_MODEL=%s", defaultModel),
-		}
-		if localAuthToken != "" {
-			env = append(env, fmt.Sprintf("ANTHROPIC_AUTH_TOKEN=%s", localAuthToken))
+		envMap := a.claudeCodeEnvForClient("claude-code-cli")
+		envMap["OCGT_DEFAULT_MODEL"] = defaultModel
+		env := make([]string, 0, len(envMap)+1)
+		for key, value := range envMap {
+			env = append(env, fmt.Sprintf("%s=%s", key, value))
 		}
 		if disableThinking {
 			env = append(env, "CLAUDE_CODE_DISABLE_THINKING=1")
 		}
 
 		if shell == "cmd" {
-			// CMD: Use %VAR% expansion — env vars already set via cmd.Env
-			cmd := exec.Command("cmd.exe", "/c", "start", "cmd.exe", "/k",
-				"echo =========================================================&& "+
-					"echo  "+welcomeTitle+"&& "+
-					"echo  "+proxyLabel+"%ANTHROPIC_BASE_URL%&& "+
-					"echo  "+modelLabel+"%OCGT_DEFAULT_MODEL% (proxy fallback)&& "+
-					"echo  "+actionHint+"&& "+
-					"echo =========================================================&& echo.")
+			scriptFile, err := os.CreateTemp("", "ocgt-claude-*.cmd")
+			if err != nil {
+				return "create cmd script error: " + err.Error()
+			}
+			script := "@echo off\r\n" +
+				"echo =========================================================\r\n" +
+				"echo  " + welcomeTitle + "\r\n" +
+				"echo  " + proxyLabel + "%ANTHROPIC_BASE_URL%\r\n" +
+				"echo  " + modelLabel + "%OCGT_DEFAULT_MODEL% (proxy fallback)\r\n" +
+				"echo  " + actionHint + "\r\n" +
+				"echo =========================================================\r\n" +
+				"echo.\r\n" +
+				"del \"%~f0\" >nul 2>nul\r\n"
+			if _, err := scriptFile.WriteString(script); err != nil {
+				_ = scriptFile.Close()
+				_ = os.Remove(scriptFile.Name())
+				return "write cmd script error: " + err.Error()
+			}
+			if err := scriptFile.Close(); err != nil {
+				_ = os.Remove(scriptFile.Name())
+				return "close cmd script error: " + err.Error()
+			}
+			cmd := exec.Command("cmd.exe", "/c", "start", "", "cmd.exe", "/k", scriptFile.Name())
 			cmd.Env = mergedClaudeProcessEnv(env, disableThinking)
 			if err := cmd.Run(); err != nil {
+				_ = os.Remove(scriptFile.Name())
 				return "launch cmd error: " + err.Error()
 			}
 		} else {
-			// PowerShell: Use $env:VAR references — values already in process env
-			psScript := "Remove-Item Env:ANTHROPIC_MODEL -ErrorAction SilentlyContinue; " +
-				powershellThinkingDisableScript(disableThinking) +
-				"Clear-Host; " +
-				"Write-Host '=========================================================' -ForegroundColor Cyan; " +
-				"Write-Host ('  " + welcomeTitle + "') -ForegroundColor Green; " +
-				"Write-Host ('  " + proxyLabel + "' + $env:ANTHROPIC_BASE_URL) -ForegroundColor Gray; " +
-				"Write-Host ('  " + modelLabel + "' + $env:OCGT_DEFAULT_MODEL + ' (proxy fallback)') -ForegroundColor Gray; " +
-				"Write-Host ('  " + actionHint + "') -ForegroundColor Green; " +
-				"Write-Host '=========================================================' -ForegroundColor Cyan; " +
-				"Write-Host ''"
-			cmd := exec.Command("powershell.exe", "-NoExit", "-Command", psScript)
+			scriptFile, err := os.CreateTemp("", "ocgt-claude-*.ps1")
+			if err != nil {
+				return "create powershell script error: " + err.Error()
+			}
+			psScript := "Remove-Item Env:ANTHROPIC_MODEL -ErrorAction SilentlyContinue\r\n" +
+				powershellThinkingDisableScript(disableThinking) + "\r\n" +
+				"Clear-Host\r\n" +
+				"Write-Host '=========================================================' -ForegroundColor Cyan\r\n" +
+				"Write-Host ('  " + welcomeTitle + "') -ForegroundColor Green\r\n" +
+				"Write-Host ('  " + proxyLabel + "' + $env:ANTHROPIC_BASE_URL) -ForegroundColor Gray\r\n" +
+				"Write-Host ('  " + modelLabel + "' + $env:OCGT_DEFAULT_MODEL + ' (proxy fallback)') -ForegroundColor Gray\r\n" +
+				"Write-Host ('  " + actionHint + "') -ForegroundColor Green\r\n" +
+				"Write-Host '=========================================================' -ForegroundColor Cyan\r\n" +
+				"Write-Host ''\r\n" +
+				"Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue\r\n"
+			if _, err := scriptFile.WriteString("\xef\xbb\xbf" + psScript); err != nil {
+				_ = scriptFile.Close()
+				_ = os.Remove(scriptFile.Name())
+				return "write powershell script error: " + err.Error()
+			}
+			if err := scriptFile.Close(); err != nil {
+				_ = os.Remove(scriptFile.Name())
+				return "close powershell script error: " + err.Error()
+			}
+			cmd := exec.Command("cmd.exe", "/c", "start", "", "powershell.exe", "-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptFile.Name())
 			cmd.Env = mergedClaudeProcessEnv(env, disableThinking)
-			if err := cmd.Start(); err != nil {
+			if err := cmd.Run(); err != nil {
+				_ = os.Remove(scriptFile.Name())
 				return "launch powershell error: " + err.Error()
 			}
 		}
@@ -587,12 +687,14 @@ func (a *App) LaunchClaudeTerminal(shell string, lang string) string {
 		// macOS: Terminal.app doesn't inherit our env, so use export commands
 		// but with all dynamic values validated above
 		authScript := "unset ANTHROPIC_AUTH_TOKEN && "
+		apiKeyScript := "export ANTHROPIC_API_KEY='ocgt-local-proxy' && "
 		if localAuthToken != "" {
 			authScript = fmt.Sprintf("export ANTHROPIC_AUTH_TOKEN='%s' && ", localAuthToken)
+			apiKeyScript = "unset ANTHROPIC_API_KEY && "
 		}
 		script := fmt.Sprintf(
-			`tell application "Terminal" to do script "unset ANTHROPIC_MODEL && export ANTHROPIC_BASE_URL='%s' && export ANTHROPIC_API_KEY='ocgt-local-proxy' && %sexport ANTHROPIC_CUSTOM_HEADERS='X-Ocgt-Profile: %s' && export MAX_THINKING_TOKENS='%s' && export OCGT_DEFAULT_MODEL='%s' && %sclear && echo '=========================================================' && echo ' %s' && echo ' %s$ANTHROPIC_BASE_URL' && echo ' %s$OCGT_DEFAULT_MODEL (proxy fallback)' && echo ' %s' && echo '=========================================================' && echo ''"`,
-			baseURL, authScript, activeProfile, thinkingTokenValue, defaultModel, shellThinkingDisableScript(disableThinking),
+			`tell application "Terminal" to do script "unset ANTHROPIC_MODEL && export ANTHROPIC_BASE_URL='%s' && %s%sexport ANTHROPIC_CUSTOM_HEADERS='X-Ocgt-Profile: %s' && export MAX_THINKING_TOKENS='%s' && export OCGT_DEFAULT_MODEL='%s' && %sclear && echo '=========================================================' && echo ' %s' && echo ' %s$ANTHROPIC_BASE_URL' && echo ' %s$OCGT_DEFAULT_MODEL (proxy fallback)' && echo ' %s' && echo '=========================================================' && echo ''"`,
+			baseURL, apiKeyScript, authScript, activeProfile+", X-Ocgt-Client: claude-code-cli", thinkingTokenValue, defaultModel, shellThinkingDisableScript(disableThinking),
 			welcomeTitle, proxyLabel, modelLabel, actionHint)
 		cmd := exec.Command("osascript", "-e", script)
 		if err := cmd.Run(); err != nil {
@@ -605,12 +707,18 @@ func (a *App) LaunchClaudeTerminal(shell string, lang string) string {
 }
 
 func unsetUserEnvironment(name string) error {
-	if err := os.Unsetenv(name); err != nil {
-		return err
+	return unsetUserEnvironmentBatch([]string{name})
+}
+
+func unsetUserEnvironmentBatch(names []string) error {
+	for _, name := range names {
+		if err := os.Unsetenv(name); err != nil {
+			return err
+		}
 	}
 	switch runtime.GOOS {
 	case "windows":
-		return unsetWindowsUserEnvironment(name)
+		return unsetWindowsUserEnvironmentBatch(names)
 	case "darwin":
 		return nil
 	default:
@@ -620,6 +728,10 @@ func unsetUserEnvironment(name string) error {
 
 func legacyClaudeEnvNames() []string {
 	return []string{
+		"ANTHROPIC_BASE_URL",
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_CUSTOM_HEADERS",
+		"OCGT_PROFILE",
 		"ANTHROPIC_AUTH_TOKEN",
 		"ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
@@ -628,9 +740,20 @@ func legacyClaudeEnvNames() []string {
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
 		"ANTHROPIC_DEFAULT_OPUS_MODEL",
 		"ANTHROPIC_MODEL",
+		"ANTHROPIC_SMALL_FAST_MODEL",
+		"CLAUDE_CODE_SUBAGENT_MODEL",
+		"API_TIMEOUT_MS",
 		"CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS",
 		"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
 		"CLAUDE_CODE_DISABLE_THINKING",
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+		"DISABLE_NON_ESSENTIAL_MODEL_CALLS",
+		"CLAUDE_CODE_ATTRIBUTION_HEADER",
+		"CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+		"ENABLE_TOOL_SEARCH",
+		"MAX_MCP_OUTPUT_TOKENS",
+		"MCP_TIMEOUT",
+		"MCP_TOOL_TIMEOUT",
 	}
 }
 
@@ -706,12 +829,18 @@ func (a *App) OpenConfigLocation() string {
 }
 
 func setUserEnvironment(name, value string) error {
-	if err := os.Setenv(name, value); err != nil {
-		return err
+	return setUserEnvironmentBatch(map[string]string{name: value})
+}
+
+func setUserEnvironmentBatch(env map[string]string) error {
+	for k, v := range env {
+		if err := os.Setenv(k, v); err != nil {
+			return err
+		}
 	}
 	switch runtime.GOOS {
 	case "windows":
-		return setWindowsUserEnvironment(name, value)
+		return setWindowsUserEnvironmentBatch(env)
 	case "darwin":
 		return nil
 	default:
@@ -801,7 +930,6 @@ func syncClaudeSettings(env map[string]string) error {
 	return nil
 }
 
-
 // clearClaudeSettings removes ocgt-specific env vars from ~/.claude/settings.json.
 func clearClaudeSettings() error {
 	home, err := os.UserHomeDir()
@@ -842,11 +970,12 @@ func clearClaudeSettings() error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(settingsPath, append(out, '\n'), 0o600); err != nil {
-		return err
-	}
-	return nil
+	if err := os.WriteFile(settingsPath, append(out, '\n'), 0o600); err != nil {
+		return err
+	}
+	return nil
 }
+
 // beforeClose is called when the user clicks the 'X' button.
 // IMPORTANT: On Windows, calling wailsruntime.MessageDialog inside this callback
 // is unreliable and causes deadlocks because the window is mid-close.
@@ -925,15 +1054,49 @@ func (a *App) ShowAboutDialog() {
 
 // SavePreferences updates preferences like window close behavior.
 func (a *App) SavePreferences(closeBehavior string) string {
-	prefs := preferences.Preferences{CloseBehavior: closeBehavior}
-	if err := prefs.Validate(); err != nil {
-		return "validation error: " + err.Error()
+	prefs, err := preferences.Load("")
+	if err != nil {
+		prefs = preferences.Preferences{}
 	}
+	prefs.CloseBehavior = closeBehavior
 	if err := prefs.Save(""); err != nil {
 		return "save error: " + err.Error()
 	}
 	if err := removeLegacyCloseBehaviorFromConfig(); err != nil {
 		log.Println("[GUI preferences] legacy close_behavior cleanup error:", err)
+	}
+	return "success"
+}
+
+func (a *App) SaveUIPreferences(theme, language string, accentHue int, lastView, compactShell, expandedIntegrationsJSON string) string {
+	prefs, err := preferences.Load("")
+	if err != nil {
+		prefs = preferences.Preferences{}
+	}
+	if strings.TrimSpace(theme) != "" {
+		prefs.Theme = theme
+	}
+	if strings.TrimSpace(language) != "" {
+		prefs.Language = language
+	}
+	if accentHue >= 0 {
+		prefs.AccentHue = accentHue
+	}
+	if strings.TrimSpace(lastView) != "" {
+		prefs.LastView = lastView
+	}
+	if strings.TrimSpace(compactShell) != "" {
+		prefs.CompactShell = compactShell
+	}
+	if strings.TrimSpace(expandedIntegrationsJSON) != "" {
+		var expanded []string
+		if err := json.Unmarshal([]byte(expandedIntegrationsJSON), &expanded); err != nil {
+			return "validation error: expanded integrations must be a JSON array"
+		}
+		prefs.ExpandedIntegrations = expanded
+	}
+	if err := prefs.Save(""); err != nil {
+		return "save error: " + err.Error()
 	}
 	return "success"
 }
@@ -944,10 +1107,33 @@ func (a *App) GetPreferences() map[string]string {
 	prefs, err := preferences.Load("")
 	if err != nil {
 		log.Println("[GUI preferences] load error:", err)
-		prefs = preferences.Preferences{CloseBehavior: preferences.DefaultCloseBehavior}
+		prefs = preferences.Preferences{
+			CloseBehavior:        preferences.DefaultCloseBehavior,
+			LogEnabled:           preferences.DefaultLogEnabled,
+			LogRetentionDays:     preferences.DefaultLogRetentionDays,
+			Theme:                preferences.DefaultTheme,
+			Language:             preferences.DefaultLanguage,
+			AccentHue:            preferences.DefaultAccentHue,
+			LastView:             preferences.DefaultLastView,
+			CompactShell:         preferences.DefaultCompactShell,
+			ExpandedIntegrations: []string{},
+		}
+		if dir, dirErr := preferences.DefaultLogDirectory(); dirErr == nil {
+			prefs.LogDirectory = dir
+		}
 	}
+	expanded, _ := json.Marshal(prefs.ExpandedIntegrations)
 	return map[string]string{
-		"close_behavior": prefs.CloseBehavior,
+		"close_behavior":        prefs.CloseBehavior,
+		"log_enabled":           strconv.FormatBool(prefs.LogEnabled),
+		"log_directory":         prefs.LogDirectory,
+		"log_retention_days":    strconv.Itoa(prefs.LogRetentionDays),
+		"theme":                 prefs.Theme,
+		"language":              prefs.Language,
+		"accent_hue":            strconv.Itoa(prefs.AccentHue),
+		"last_view":             prefs.LastView,
+		"compact_shell":         prefs.CompactShell,
+		"expanded_integrations": string(expanded),
 	}
 }
 

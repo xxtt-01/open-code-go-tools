@@ -11,19 +11,27 @@ import (
 
 const maxReasoningEntries = 1024
 
-// MaxBodySize is the maximum allowed request body size (10 MB).
-const MaxBodySize int64 = 10 << 20
+// MaxBodySize is the maximum allowed request body size (50 MB).
+// Increased from 10MB to accommodate large tool call arguments (e.g., file content for WRITE/EDIT tools)
+// and requests with extensive conversation history.
+const MaxBodySize int64 = 50 << 20
 
 type requestLogEntry struct {
-	ID       string    `json:"id"`
-	Time     time.Time `json:"time"`
-	Method   string    `json:"method"`
-	Path     string    `json:"path"`
-	Status   int       `json:"status"`
-	Duration string    `json:"duration"`
-	Model    string    `json:"model"`
-	Route    string    `json:"route"`
-	Error    string    `json:"error,omitempty"`
+	ID                  string    `json:"id"`
+	Time                time.Time `json:"time"`
+	Method              string    `json:"method"`
+	Path                string    `json:"path"`
+	Status              int       `json:"status"`
+	Duration            string    `json:"duration"`
+	Model               string    `json:"model"`
+	Route               string    `json:"route"`
+	Client              string    `json:"client,omitempty"`
+	InputTokens         int       `json:"input_tokens,omitempty"`
+	OutputTokens        int       `json:"output_tokens,omitempty"`
+	CacheCreationTokens int       `json:"cache_creation_tokens,omitempty"`
+	CacheReadTokens     int       `json:"cache_read_tokens,omitempty"`
+	TotalTokens         int       `json:"total_tokens,omitempty"`
+	Error               string    `json:"error,omitempty"`
 }
 
 type Server struct {
@@ -32,7 +40,8 @@ type Server struct {
 	client     *http.Client
 	upstream   string
 
-	configMu sync.RWMutex // Protects config, upstream, and client.Timeout
+	configMu    sync.RWMutex // Protects config, upstream, and client.Timeout
+	rateLimiter *rateLimiter
 
 	reasoningMu     sync.Mutex
 	reasoningByTool map[string]string
@@ -40,6 +49,12 @@ type Server struct {
 
 	historyMu sync.RWMutex
 	history   []requestLogEntry
+
+	historyLogMu            sync.Mutex
+	historyLogEnabled       bool
+	historyLogDir           string
+	historyLogRetentionDays int
+	historyLogLastCleanup   time.Time
 
 	// Circuit breaker state
 	circuitMu           sync.Mutex
@@ -134,7 +149,7 @@ type openAIResponse struct {
 			ReasoningDetails any        `json:"reasoning_details"` // compatibility
 			ToolCalls        []toolCall `json:"tool_calls"`
 		} `json:"message"`
-		FinishReason string `json:"finish_reason"`
+		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage openAIUsage `json:"usage"`
 }
@@ -195,6 +210,7 @@ func New(cfg config.Config) (*Server, error) {
 		config:              cfg,
 		upstream:            cfg.Upstream,
 		client:              &http.Client{Timeout: cfg.RequestTimeout(), Transport: transport},
+		rateLimiter:         newRateLimiter(cfg.RateLimit()),
 		reasoningByTool:     map[string]string{},
 		consecutiveFailures: map[string]int{},
 		trippedUntil:        map[string]time.Time{},
@@ -213,8 +229,26 @@ func (s *Server) ApplyConfig(cfg config.Config) {
 	s.config = cfg
 	s.upstream = cfg.Upstream
 	if s.client != nil {
-		s.client.Timeout = cfg.RequestTimeout()
+		// Replace the entire client so concurrent readers that already
+		// snapshotted the old pointer keep using a consistent timeout.
+		old := s.client
+		s.client = &http.Client{
+			Timeout:   cfg.RequestTimeout(),
+			Transport: old.Transport,
+		}
 	}
+	if s.rateLimiter != nil {
+		s.rateLimiter.setLimits(cfg.RateLimit())
+	}
+}
+
+// clientSnapshot returns a consistent snapshot of the HTTP client under the config read lock.
+// Safe to call from concurrent HTTP handlers.
+func (s *Server) clientSnapshot() *http.Client {
+	s.configMu.RLock()
+	c := s.client
+	s.configMu.RUnlock()
+	return c
 }
 
 func (s *Server) ListenAddress() string {

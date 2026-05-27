@@ -1,14 +1,82 @@
-// ── ocgt Dashboard ──
-// Refactored: modular structure, bug fixes, proper i18n coverage
-
-// ══════════════════════════════════════════════════════
-// §1 — Constants & Global State
-// ══════════════════════════════════════════════════════
-
-const APP_VERSION = 'v0.2.0';
+const APP_VERSION = 'v0.2.1';
 const DEFAULT_CLOSE_BEHAVIOR = 'prompt';
 const CLOSE_BEHAVIORS = new Set(['prompt', 'minimize', 'exit']);
 const ALLOWED_THINKING_BUDGETS = ['256', '512', '1024', '2048', '-1'];
+const THEME_VALUES = new Set(['light', 'dark', 'system']);
+const LANGUAGE_VALUES = new Set(['zh', 'en']);
+const VIEW_VALUES = new Set(['dashboard', 'settings', 'terminal', 'history']);
+const COMPACT_SHELL_VALUES = new Set(['powershell', 'cmd', 'bash']);
+const INTEGRATION_IDS = ['quick', 'cli', 'vscode', 'claude-desktop'];
+
+
+
+// ── Model Registry (single source of truth) ──
+
+// Add/remove models here — all <select> dropdowns update automatically.
+
+const MODEL_REGISTRY = [
+
+    // { id, label, recommended?, category }
+
+    { id: 'kimi-k2.6', label: 'kimi-k2.6', recommended: true, category: 'Kimi' },
+
+    { id: 'kimi-k2.5', label: 'kimi-k2.5', recommended: false, category: 'Kimi' },
+
+    { id: 'qwen3.6-plus', label: 'qwen3.6-plus', recommended: true, category: 'Qwen' },
+
+    { id: 'qwen3.5-plus', label: 'qwen3.5-plus', recommended: false, category: 'Qwen' },
+
+    { id: 'deepseek-v4-pro', label: 'deepseek-v4-pro', recommended: true, category: 'DeepSeek' },
+
+    { id: 'deepseek-v4-flash', label: 'deepseek-v4-flash', recommended: false, category: 'DeepSeek' },
+
+    { id: 'glm-5.1', label: 'glm-5.1', recommended: true, category: 'Zhipu' },
+
+    { id: 'glm-5', label: 'glm-5', recommended: false, category: 'Zhipu' },
+
+    { id: 'hy3-preview', label: 'hy3-preview', recommended: false, category: 'Hunyuan' },
+
+    { id: 'mimo-v2.5-pro', label: 'mimo-v2.5-pro', recommended: false, category: 'MiMo' },
+
+    { id: 'mimo-v2.5', label: 'mimo-v2.5', recommended: false, category: 'MiMo' },
+
+    { id: 'minimax-m2.7', label: 'minimax-m2.7', recommended: false, category: 'MiniMax' },
+
+];
+
+
+
+// Default recommended model per mapping slot (overridden by config if set)
+
+const MAPPING_DEFAULTS = {
+
+    sonnet: 'qwen3.6-plus',
+
+    haiku: 'deepseek-v4-flash',
+
+    opus: 'kimi-k2.6',
+
+};
+
+
+
+// ── Accent color presets ──
+
+const ACCENT_PRESETS = [
+
+    { hue: 174, name: 'Teal' },
+
+    { hue: 212, name: 'Blue' },
+
+    { hue: 260, name: 'Purple' },
+
+    { hue: 25, name: 'Orange' },
+
+    { hue: 330, name: 'Pink' },
+
+];
+
+
 
 let API_BASE = 'http://127.0.0.1:8787';
 let systemStatus = null;
@@ -19,6 +87,11 @@ let originalSettingsValues = {};
 let LOCAL_AUTH_TOKEN = '';
 let isLoadingDashboard = true;
 let isInitializing = false;
+let _consecutiveFailures = 0;
+let integrationStatusChecking = false;
+let integrationStatusTimer = null;
+let uiPreferencesLoaded = false;
+let uiPreferencesSaveTimer = null;
 
 // ══════════════════════════════════════════════════════
 // §2 — i18n Dictionary
@@ -28,7 +101,7 @@ const i18n = {
     zh: {
         nav_dashboard: "系统状态",
         nav_settings: "配置管理",
-        nav_terminal: "终端启动",
+        nav_terminal: "快速连接",
         nav_history: "流量监控",
         status_running: "代理运行中",
         status_connecting: "代理连接中",
@@ -47,8 +120,9 @@ const i18n = {
         subtitle_dashboard: "查看当前代理服务运行指标与后台状态",
         title_settings: "一键配置管理中心",
         subtitle_settings: "快速设置您的 API 密钥与高阶 Claude 模型代理映射",
-        title_terminal: "一键控制台激活",
-        subtitle_terminal: "一键启动已载入代理环境变量的原生命令行窗口",
+        title_terminal: "快速连接",
+
+        subtitle_terminal: "一键将代理接入终端、编辑器与 Claude 客户端",
         hint_desktop_config_short: "一键将 ocgt 代理配置写入 Claude Code 桌面版",
         title_history: "流量雷达监控",
         subtitle_history: "实时捕获并通过仪表盘统计来自 Claude Code 的 API 请求日志",
@@ -63,33 +137,51 @@ const i18n = {
         lbl_last_updated: "刚刚更新",
         btn_open_folder: "打开所在文件夹",
         sett_title: "一键配置管理中心",
-        sett_section_api: "API Configuration",
-        sett_section_model: "Model Settings",
-        sett_section_prefs: "Application Preferences",
+        sett_section_api: "API 代理配置",
+        sett_section_model: "模型策略设置",
+        sett_section_prefs: "偏好设置",
         sett_profile: "当前配置 Profile",
-        sett_default_model: "全局默认模型 (Default Model)",
-        sett_api_key: "OpenCode Go API Key (代理密钥)",
+        sett_default_model: "全局默认模型",
+        sett_api_key: "代理 API 密钥",
         placeholder_api_key: "请输入您的 sk-... 密钥",
-        sett_timeout: "请求超时检查 (秒，1-3600)",
+        sett_upstream: "上游 API 地址",
+        sett_timeout: "请求超时（秒，1-3600）",
         sett_thinking: "思考强度（支持模型生效）",
         opt_thinking_256: "快速 · 低延迟",
-        opt_thinking_512: "慢速 · 强力",
+        opt_thinking_512: "均衡",
         opt_thinking_1024: "深度 · 复杂任务",
-        opt_thinking_2048: "极客 · 强力重构",
+        opt_thinking_2048: "最大 · 重度重构",
         opt_thinking_off: "关闭思考",
-        sett_mapping_title: "Claude 模型映射设置 (Real-time Alias Mapping)",
-        sett_mapping_sonnet: "Sonnet 映射目标",
-        sett_mapping_haiku: "Haiku 映射目标",
-        sett_mapping_opus: "Opus 映射目标",
-        opt_custom: "-- 自定义模型 --",
-        btn_save_config: "保存并热重载配置",
+        sett_mapping_title: "Claude 模型映射",
+
+        sett_mapping_sonnet: "Sonnet",
+
+        sett_mapping_haiku: "Haiku",
+
+        sett_mapping_opus: "Opus",
+        sett_advanced_title: "高级代理参数",
+        sett_rate_limit: "每秒请求上限",
+        sett_rate_burst: "突发请求容量",
+        sett_claude_env_template: "Claude Code 环境变量模板",
+        opt_custom: "-- Custom Model --",
+        btn_save_config: "保存配置",
         btn_repair_env: "一键修复 Claude Code 系统环境变量",
         btn_reset_defaults: "重置为默认值",
-        btn_about_app: "关于 ocgt 控制面板 (About App)",
+        btn_about_app: "关于 ocgt",
         btn_clear_history: "清除历史记录",
-        hint_save: "保存后同步更新 config.json、热重载 Go 服务；思考强度会按模型能力转换，不支持的模型不会发送额外 thinking 字段",
-        hint_tip: "💡 提示：在\"终端启动\"页中只需选择并一键启动任意一种您习惯的命令行窗口即可，无需重复配置多种终端。",
+        hint_save: "保存只更新代理配置和当前已持久激活的目标；未激活的 CLI、VS Code 或 Claude Desktop 不会被写入。",
+        hint_tip: "💡 提示：只需在“客户端集成”中一键激活或配置您的终端，新建窗口即可开箱即用，无需在此做重复修改。",
         hint_changes_detected: "检测到未保存的更改",
+        btn_cancel_changes: "取消更改",
+        sync_profile: "Profile",
+        sync_listen: "监听",
+        sync_cli: "CLI",
+        sync_vscode: "VS Code",
+        sync_claude: "Claude Code",
+        sync_active: "",
+        sync_inactive: "",
+        token_log_on: "日志开启",
+        token_log_off: "日志关闭",
         term_title: "一键唤醒代理控制台",
         term_shell_type: "目标命令行类型",
         btn_launch_term: "一键拉起配置终端 (Launch)",
@@ -111,13 +203,30 @@ const i18n = {
         guide_3: "直接在拉起的窗口中键入 <code>claude</code> 即可启动 AI 代码对话。",
         guide_4: "（可选）若要在已有终端中工作，可点击右侧的复制按钮导入配置。",
         guide_5: "<b>提示</b>：终端类型只需选择并一键启动任意一个即可，无需全部配置或启动。",
-        code_env_title: "Claude Code 环境变量 (Env Setup)",
-        code_ccswitch_title: "CC Switch 提供商配置 (JSON Import)",
+        code_env_title: "Claude Code 环境变量",
+        code_ccswitch_title: "CC Switch 提供商配置",
         btn_copy: "复制",
         btn_copied: "已复制 ✓",
         traf_total: "总吞吐请求量",
+
         traf_rate: "请求成功率",
+
         traf_latency: "平均响应延时",
+
+        traf_tokens: "Token 消耗",
+
+        traf_limit: "请求限制",
+
+        traf_token_detail: "Token 消耗明细",
+
+        traf_input_output: "input + output",
+
+        traf_rpm_hint: "RPM / 配额",
+
+        th_tokens: "Tokens",
+        th_client: "来源",
+        client_unknown: "未知",
+
         th_time: "时间",
         th_method: "方法",
         th_path: "路由路径",
@@ -127,19 +236,27 @@ const i18n = {
         th_error: "错误原因",
         traf_empty: "暂无流量记录。请使用一键终端或在其他 Shell 中向代理发送请求...",
         traf_listening: "实时流量雷达持续监听中",
-        opt_model_kimi_26: "kimi-k2.6 (推荐 - Kimi 旗舰)",
-        opt_model_qwen_36: "qwen3.6-plus (通义千问高效)",
-        opt_model_deepseek_pro: "deepseek-v4-pro (深度求索通用)",
-        opt_model_deepseek_flash: "deepseek-v4-flash (极速模型)",
-        opt_model_glm_51: "glm-5.1 (智谱旗舰)",
-        opt_model_hy3_preview: "hy3-preview (混元预览)",
-        opt_mapping_sonnet_default: "qwen3.6-plus (推荐平替)",
-        opt_mapping_haiku_default: "deepseek-v4-flash (推荐极速)",
-        opt_mapping_opus_default: "kimi-k2.6 (推荐长文本)",
-        sett_close_behavior: "关闭窗口时的行为 (Close Window Behavior)",
-        opt_close_prompt: "每次询问我 (Prompt Every Time)",
-        opt_close_minimize: "直接最小化到系统托盘 (Minimize to Tray)",
-        opt_close_exit: "彻底退出程序 (Exit Directly)",
+        opt_model_kimi_26: "kimi-k2.6",
+
+        opt_model_qwen_36: "qwen3.6-plus",
+
+        opt_model_deepseek_pro: "deepseek-v4-pro",
+
+        opt_model_deepseek_flash: "deepseek-v4-flash",
+
+        opt_model_glm_51: "glm-5.1",
+
+        opt_model_hy3_preview: "hy3-preview",
+
+        opt_mapping_sonnet_default: "qwen3.6-plus (recommended)",
+
+        opt_mapping_haiku_default: "deepseek-v4-flash (recommended)",
+
+        opt_mapping_opus_default: "kimi-k2.6 (recommended)",
+        sett_close_behavior: "关闭窗口行为",
+        opt_close_prompt: "每次询问",
+        opt_close_minimize: "最小化到托盘",
+        opt_close_exit: "直接退出",
         close_dialog_title: "关闭窗口",
         close_dialog_msg: "选择您希望的操作方式：",
         close_dialog_exit: "彻底退出程序",
@@ -151,8 +268,12 @@ const i18n = {
         about_project: "项目地址",
         about_close: "关闭",
         err_api_key_required: "请输入 API Key",
+        err_upstream_url: "请输入有效的 http(s) 地址",
         err_timeout_range: "超时必须在 1-3600 秒之间",
-        toast_saved: "配置已保存并热重载",
+        err_rate_limit_range: "范围必须在 1-10000 之间",
+        err_rate_burst_range: "范围必须在 1-100000 之间",
+        err_claude_env_json: "必须是 JSON 对象，键和值都必须是字符串",
+        toast_saved: "配置已保存；已激活目标已同步刷新",
         toast_save_failed: "保存失败",
         toast_env_repaired: "环境变量已修复并写入系统",
         toast_env_repair_failed: "环境变量修复失败",
@@ -198,15 +319,74 @@ const i18n = {
         pref_theme_light: "浅色",
         pref_theme_dark: "深色",
         pref_theme_system: "跟随系统",
+
+        pref_accent_color: "主题色",
+
+        pref_network: "网络",
+
+        pref_network_desc: "代理监听地址与端口",
+
+        pref_listen_addr: "监听地址",
+
+        btn_apply_restart: "应用并重启",
+
         pref_behavior: "行为",
+
         pref_behavior_desc: "关闭窗口与系统交互",
+        pref_log_save: "GUI 日志保存",
+        pref_log_dir: "日志目录",
+        pref_log_retention: "保留天数",
+        btn_open_log_dir: "打开",
+        btn_save_log_prefs: "保存日志设置",
+        toast_log_prefs_saved: "日志设置已保存",
+        toast_log_prefs_failed: "日志设置保存失败",
         pref_danger: "重置与关于",
-        pref_danger_desc: "恢复默认设置或查看版本信息"
+        pref_danger_desc: "恢复默认设置或查看版本信息",
+        badge_not_configured: "未激活",
+        badge_active: "已激活 ✓",
+        badge_inactive: "未激活",
+        badge_recommended: "推荐",
+        int_quick_title: "快速开始：临时终端",
+        int_quick_desc: "只为当前新开的终端窗口临时注入代理变量，不写入系统配置；可以连续打开多个窗口。",
+        btn_launch_temp_term: "打开临时终端",
+        int_sys_title: "Claude Code CLI",
+        int_sys_desc: "一键把 ocgt 代理变量写入用户环境，之后 Claude Code CLI 会自动走当前 Profile 的本地代理。",
+        btn_sys_install: "一键激活",
+
+        btn_sys_remove: "移除配置",
+        lbl_temp_import: "临时导入 (当前窗口生效):",
+        int_vscode_title: "VS Code Claude Code 插件",
+        int_vscode_desc: "自动向 VS Code 用户配置注入 ocgt 代理变量。插件或其启动的 Claude Code 进程会继承这些变量，新建会话即可走本地代理。",
+        btn_vscode_install: "一键激活",
+
+        btn_vscode_remove: "移除配置",
+        int_vscode_tip: "注入后重新打开 VS Code 内的 Claude Code 会话即可验证。",
+        int_claude_title: "Claude Code settings",
+        int_claude_desc: "将 ocgt 代理写入 <code>~/.claude/settings.json</code>，用于 Claude Code 本地客户端读取代理环境；真实 Claude Desktop App 请使用下方 3P profile。",
+        btn_setup_desktop_full: "一键激活",
+
+        btn_clear_desktop_full: "移除配置",
+        lbl_desktop_help_title: "Claude Code settings",
+        lbl_desktop_help_desc: "这里不是 Claude Desktop 登录接管，只写入 Claude Code 读取的 settings.json 环境块。",
+        int_claude_desktop_title: "Claude Desktop App",
+        int_claude_desktop_desc: "按 cc-switch 的 3P profile 方式写入 Claude Desktop 配置，重启 Claude Desktop 后通过 ocgt 本地路由转发。",
+        btn_setup_claude_desktop_app: "持久激活",
+        btn_clear_claude_desktop_app: "移除配置",
+        toast_claude_desktop_app_setup_success: "Claude Desktop App 3P 配置已写入，重启 Claude Desktop 后生效。",
+        toast_claude_desktop_app_cleared: "Claude Desktop App 3P 配置已移除。",
+        toast_vscode_installed: "VS Code Claude Code 插件配置已注入！",
+        toast_vscode_removed: "VS Code Claude Code 插件配置已清除！",
+        toast_sys_installed: "Claude Code CLI 环境变量已注入，重新启动 CLI 即可生效！",
+        toast_sys_removed: "Claude Code CLI 环境变量已清除！",
+        toast_vscode_failed: "配置 VS Code 失败",
+        loading_init: "正在初始化代理服务...",
+        btn_retry_connection: "重试连接",
+        token_total_label: "总计: {{count}} tokens"
     },
     en: {
         nav_dashboard: "Status",
         nav_settings: "Configuration",
-        nav_terminal: "Terminal",
+        nav_terminal: "Quick Connect",
         nav_history: "Traffic Radar",
         status_running: "Proxy Running",
         status_connecting: "Connecting...",
@@ -225,8 +405,9 @@ const i18n = {
         subtitle_dashboard: "Monitor real-time proxy metrics and server status",
         title_settings: "Configuration Center",
         subtitle_settings: "Manage your upstream API keys, timeouts, and Claude model aliases",
-        title_terminal: "One-Click Terminal Activator",
-        subtitle_terminal: "Launch pre-configured shell terminals with proxy environments loaded",
+        title_terminal: "Quick Connect",
+
+        subtitle_terminal: "One-click proxy setup for terminals, editors, and Claude clients",
         hint_desktop_config_short: "One-click write ocgt proxy config into Claude Code Desktop",
         title_history: "Traffic Monitoring Radar",
         subtitle_history: "Real-time capture of API logs and metrics received from Claude Code",
@@ -248,6 +429,7 @@ const i18n = {
         sett_default_model: "Global Default Model",
         sett_api_key: "OpenCode Go API Key",
         placeholder_api_key: "Enter your OpenCode sk-... API Key",
+        sett_upstream: "Upstream API URL",
         sett_timeout: "Request Timeout (Seconds, 1-3600)",
         sett_thinking: "Reasoning Intensity (Supported Models)",
         opt_thinking_256: "Fast · Low Latency",
@@ -255,19 +437,36 @@ const i18n = {
         opt_thinking_1024: "Deep · Complex Tasks",
         opt_thinking_2048: "Geek · Heavy Refactoring",
         opt_thinking_off: "Disable Reasoning",
-        sett_mapping_title: "Claude Model Alias Mapping",
-        sett_mapping_sonnet: "Claude Sonnet Mapping",
-        sett_mapping_haiku: "Claude Haiku Mapping",
-        sett_mapping_opus: "Claude Opus Mapping",
+        sett_mapping_title: "Model Alias Mapping",
+
+        sett_mapping_sonnet: "Sonnet",
+
+        sett_mapping_haiku: "Haiku",
+
+        sett_mapping_opus: "Opus",
+        sett_advanced_title: "Advanced Proxy Parameters",
+        sett_rate_limit: "Requests Per Second",
+        sett_rate_burst: "Burst Capacity",
+        sett_claude_env_template: "Claude Code Env Template",
         opt_custom: "-- Custom Model --",
-        btn_save_config: "Save & Hot-Reload",
+        btn_save_config: "Save Configuration",
         btn_repair_env: "One-click Repair Claude Code System Env",
         btn_reset_defaults: "Reset to defaults",
         btn_about_app: "About ocgt Dashboard",
         btn_clear_history: "Clear history",
-        hint_save: "Saves config and hot-reloads the proxy; reasoning controls are only sent to models with compatible request schemas",
+        hint_save: "Saving updates proxy configuration and refreshes only already activated targets; inactive CLI, VS Code, or Claude Desktop targets are not written.",
         hint_tip: "💡 Tip: Just select and launch any terminal shell of your choice. No need to repeatedly configure all shells.",
         hint_changes_detected: "Unsaved changes detected",
+        btn_cancel_changes: "Cancel Changes",
+        sync_profile: "Profile",
+        sync_listen: "Listen",
+        sync_cli: "CLI",
+        sync_vscode: "VS Code",
+        sync_claude: "Claude Code",
+        sync_active: "",
+        sync_inactive: "",
+        token_log_on: "Log on",
+        token_log_off: "Log off",
         term_title: "Spawn Pre-configured Console",
         term_shell_type: "Target Shell / Console Type",
         btn_launch_term: "Launch Pre-configured Terminal",
@@ -294,8 +493,25 @@ const i18n = {
         btn_copy: "Copy",
         btn_copied: "Copied ✓",
         traf_total: "Total Requests",
+
         traf_rate: "Success Rate",
+
         traf_latency: "Average Latency",
+
+        traf_tokens: "Token Usage",
+
+        traf_limit: "Rate Limit",
+
+        traf_token_detail: "Token Usage Breakdown",
+
+        traf_input_output: "input + output",
+
+        traf_rpm_hint: "RPM / Quota",
+
+        th_tokens: "Tokens",
+        th_client: "Source",
+        client_unknown: "Unknown",
+
         th_time: "Time",
         th_method: "Method",
         th_path: "Request Path",
@@ -305,15 +521,15 @@ const i18n = {
         th_error: "Error Details",
         traf_empty: "No traffic captured yet. Launch a terminal or make API requests through the proxy...",
         traf_listening: "Live Traffic Radar Active & Listening",
-        opt_model_kimi_26: "kimi-k2.6 (Recommended - Kimi Flagship)",
-        opt_model_qwen_36: "qwen3.6-plus (Qwen High Efficiency)",
-        opt_model_deepseek_pro: "deepseek-v4-pro (DeepSeek Universal)",
-        opt_model_deepseek_flash: "deepseek-v4-flash (Flash Speed)",
-        opt_model_glm_51: "glm-5.1 (GLM Flagship)",
-        opt_model_hy3_preview: "hy3-preview (Hunyuan Preview)",
-        opt_mapping_sonnet_default: "qwen3.6-plus (Recommended)",
-        opt_mapping_haiku_default: "deepseek-v4-flash (Recommended)",
-        opt_mapping_opus_default: "kimi-k2.6 (Recommended Long Context)",
+        opt_model_kimi_26: "kimi-k2.6",
+        opt_model_qwen_36: "qwen3.6-plus",
+        opt_model_deepseek_pro: "deepseek-v4-pro",
+        opt_model_deepseek_flash: "deepseek-v4-flash",
+        opt_model_glm_51: "glm-5.1",
+        opt_model_hy3_preview: "hy3-preview",
+        opt_mapping_sonnet_default: "qwen3.6-plus (recommended)",
+        opt_mapping_haiku_default: "deepseek-v4-flash (recommended)",
+        opt_mapping_opus_default: "kimi-k2.6 (recommended)",
         sett_close_behavior: "Close Window Behavior",
         opt_close_prompt: "Prompt Every Time",
         opt_close_minimize: "Minimize to System Tray",
@@ -329,8 +545,12 @@ const i18n = {
         about_project: "Project",
         about_close: "Close",
         err_api_key_required: "API Key is required",
+        err_upstream_url: "Enter a valid http(s) URL",
         err_timeout_range: "Timeout must be 1-3600 seconds",
-        toast_saved: "Configuration saved & hot-reloaded",
+        err_rate_limit_range: "Range must be 1-10000",
+        err_rate_burst_range: "Range must be 1-100000",
+        err_claude_env_json: "Must be a JSON object with string keys and values",
+        toast_saved: "Configuration saved; activated targets refreshed.",
         toast_save_failed: "Save failed",
         toast_env_repaired: "Environment variables written to system",
         toast_env_repair_failed: "Environment repair failed",
@@ -369,10 +589,69 @@ const i18n = {
         pref_theme_light: "Light",
         pref_theme_dark: "Dark",
         pref_theme_system: "System",
+
+        pref_accent_color: "Accent Color",
+
+        pref_network: "Network",
+
+        pref_network_desc: "Proxy listen address and port",
+
+        pref_listen_addr: "Listen Address",
+
+        btn_apply_restart: "Apply & Restart",
+
         pref_behavior: "Behavior",
+
         pref_behavior_desc: "Window close and system interaction",
+        pref_log_save: "GUI Log Saving",
+        pref_log_dir: "Log Directory",
+        pref_log_retention: "Retention Days",
+        btn_open_log_dir: "Open",
+        btn_save_log_prefs: "Save Log Settings",
+        toast_log_prefs_saved: "Log settings saved",
+        toast_log_prefs_failed: "Failed to save log settings",
         pref_danger: "Reset & About",
-        pref_danger_desc: "Reset defaults or view version info"
+        pref_danger_desc: "Reset defaults or view version info",
+        badge_not_configured: "Inactive",
+        badge_active: "Active ✓",
+        badge_inactive: "Inactive",
+        badge_recommended: "Recommended",
+        int_quick_title: "Quick Start: Temporary Terminal",
+        int_quick_desc: "Temporarily injects proxy variables only into the newly opened terminal window. It does not write persistent config, and you can open multiple windows.",
+        btn_launch_temp_term: "Open Temporary Terminal",
+        int_sys_title: "Claude Code CLI",
+        int_sys_desc: "Persist ocgt proxy variables into the user environment so Claude Code CLI automatically routes through the active local proxy profile.",
+        btn_sys_install: "Activate",
+
+        btn_sys_remove: "Remove",
+        lbl_temp_import: "Temp Import (Current window only):",
+        int_vscode_title: "VS Code Claude Code Extension",
+        int_vscode_desc: "Inject ocgt proxy variables into VS Code user settings. The Claude Code extension, or the Claude Code process it launches, can inherit the local proxy environment.",
+        btn_vscode_install: "Activate",
+
+        btn_vscode_remove: "Remove",
+        int_vscode_tip: "Reopen a VS Code Claude Code session after injection to verify the route.",
+        int_claude_title: "Claude Code settings",
+        int_claude_desc: "Writes ocgt proxy variables into <code>~/.claude/settings.json</code> for local Claude Code clients. Use the separate 3P profile action below for the real Claude Desktop App.",
+        btn_setup_desktop_full: "Activate",
+
+        btn_clear_desktop_full: "Remove",
+        lbl_desktop_help_title: "Claude Code settings",
+        lbl_desktop_help_desc: "This is not Claude Desktop sign-in takeover; it writes only the settings.json env block read by Claude Code.",
+        int_claude_desktop_title: "Claude Desktop App",
+        int_claude_desktop_desc: "Writes Claude Desktop config using the same 3P profile approach as cc-switch. Restart Claude Desktop to route requests through ocgt.",
+        btn_setup_claude_desktop_app: "Persistently Activate",
+        btn_clear_claude_desktop_app: "Remove Config",
+        toast_claude_desktop_app_setup_success: "Claude Desktop App 3P config written. Restart Claude Desktop to apply.",
+        toast_claude_desktop_app_cleared: "Claude Desktop App 3P config removed.",
+        toast_vscode_installed: "VS Code Claude Code extension configuration injected!",
+        toast_vscode_removed: "VS Code Claude Code extension configuration cleared!",
+        toast_sys_installed: "Claude Code CLI environment variables injected. Restart the CLI to apply!",
+        toast_sys_removed: "Claude Code CLI environment variables cleared!",
+        toast_vscode_failed: "Failed to configure VS Code",
+        loading_init: "Initializing proxy service...",
+        btn_retry_connection: "Retry Connection",
+        token_total_label: "Total: {{count}} tokens"
     }
 };
 
@@ -434,6 +713,37 @@ function normalizeCloseBehavior(value) {
     return CLOSE_BEHAVIORS.has(value) ? value : DEFAULT_CLOSE_BEHAVIOR;
 }
 
+function normalizeTheme(value) {
+    return THEME_VALUES.has(value) ? value : 'system';
+}
+
+function normalizeLanguage(value) {
+    return LANGUAGE_VALUES.has(value) ? value : 'zh';
+}
+
+function normalizeHue(value) {
+    const hue = Number(value);
+    if (!Number.isFinite(hue)) return 174;
+    return Math.max(0, Math.min(360, Math.round(hue)));
+}
+
+function normalizeView(value) {
+    return VIEW_VALUES.has(value) ? value : 'dashboard';
+}
+
+function normalizeCompactShell(value) {
+    return COMPACT_SHELL_VALUES.has(value) ? value : 'powershell';
+}
+
+function parseExpandedIntegrations(value) {
+    let raw = value;
+    if (typeof raw === 'string' && raw.trim()) {
+        try { raw = JSON.parse(raw); } catch (_) { raw = []; }
+    }
+    if (!Array.isArray(raw)) raw = [];
+    return raw.filter(id => INTEGRATION_IDS.includes(id));
+}
+
 function padTwo(n) { return n.toString().padStart(2, '0'); }
 // ══════════════════════════════════════════════════════
 
@@ -446,7 +756,6 @@ function cacheDom() {
     dom.elUpstream = document.getElementById('status-upstream');
     dom.elProfile = document.getElementById('status-profile');
     dom.elModel = document.getElementById('status-model');
-    dom.elConfigPath = document.getElementById('status-config-path');
     dom.elTimeout = document.getElementById('status-timeout');
     dom.elApiKey = document.getElementById('status-api-key');
     dom.dashboardSkeletons = document.getElementById('dashboard-skeletons');
@@ -455,39 +764,69 @@ function cacheDom() {
     // Settings
     dom.selectProfile = document.getElementById('profile-select');
     dom.inputApiKey = document.getElementById('api-key-input');
+    dom.inputUpstream = document.getElementById('upstream-input');
     dom.inputTimeout = document.getElementById('timeout-input');
     dom.inputThinkingBudget = document.getElementById('thinking-budget-input');
+    dom.inputRateLimit = document.getElementById('rate-limit-input');
+    dom.inputRateBurst = document.getElementById('rate-burst-input');
+    dom.inputClaudeEnvTemplate = document.getElementById('claude-env-template-input');
     dom.inputDefaultModel = document.getElementById('default-model-input');
     dom.inputSonnetMapping = document.getElementById('mapping-sonnet-input');
     dom.inputHaikuMapping = document.getElementById('mapping-haiku-input');
     dom.inputOpusMapping = document.getElementById('mapping-opus-input');
     dom.inputCloseBehavior = document.getElementById('close-behavior-input');
+    dom.inputLogEnabled = document.getElementById('log-enabled-input');
+    dom.inputLogDirectory = document.getElementById('log-directory-input');
+    dom.inputLogRetention = document.getElementById('log-retention-input');
+    dom.btnSaveLogPrefs = document.getElementById('save-log-prefs-btn');
+    dom.btnOpenLogDir = document.getElementById('open-log-dir-btn');
     dom.btnSaveAllConfig = document.getElementById('save-all-config-btn');
+    dom.btnCancelConfig = document.getElementById('cancel-config-btn');
     dom.btnInstallEnv = document.getElementById('install-env-btn');
-    dom.btnInstallEnvTerminal = document.getElementById('install-env-terminal-btn');
-    dom.btnSetupDesktop = document.getElementById('setup-desktop-btn');
 
-    dom.btnSetupDesktopText = dom.btnSetupDesktop ? dom.btnSetupDesktop.querySelector('span') : null;
+    // System Environment Card
+    dom.btnSysEnvInstall = document.getElementById('sys-env-install-btn');
+    dom.btnSysEnvRemove = document.getElementById('sys-env-remove-btn');
+    dom.sysEnvBadge = document.getElementById('sys-env-badge');
+    dom.btnLaunchTerminal = document.getElementById('launch-temp-terminal-btn');
+    dom.compactShellTabs = document.getElementById('compact-shell-tabs');
+    dom.compactEnvCode = document.getElementById('compact-env-code');
+    dom.compactCopyBtn = document.getElementById('compact-copy-btn');
+
+    // VS Code Integration Card
+    dom.btnVscodeInstall = document.getElementById('vscode-install-btn');
+    dom.btnVscodeRemove = document.getElementById('vscode-remove-btn');
+    dom.vscodeBadge = document.getElementById('vscode-badge');
+
+    // Claude CLI / Desktop Card
+    dom.btnSetupDesktop = document.getElementById('setup-desktop-btn');
+    dom.btnSetupDesktopText = dom.btnSetupDesktop ? dom.btnSetupDesktop : null; // matches old binding safely
     dom.btnClearDesktop = document.getElementById('clear-desktop-btn');
-    dom.btnGotoDesktopConfig = document.getElementById('goto-desktop-config-btn');
+    dom.claudeDesktopBadge = document.getElementById('claude-desktop-badge');
+    dom.btnSetupClaudeDesktopApp = document.getElementById('setup-claude-desktop-app-btn');
+    dom.btnClearClaudeDesktopApp = document.getElementById('clear-claude-desktop-app-btn');
+    dom.claudeDesktopAppBadge = document.getElementById('claude-desktop-app-badge');
+    // Desktop client activation moved from dashboard to the Quick Connect page.
 
     dom.btnToggleVisibility = document.getElementById('toggle-key-visibility');
     dom.settingsForm = document.getElementById('settings-form');
     dom.configActions = document.getElementById('config-actions');
     dom.resetDefaultsBtn = document.getElementById('reset-defaults-btn');
     dom.btnAboutApp = document.getElementById('about-app-btn');
-
-    // Terminal
-    dom.btnLaunchTerminal = document.getElementById('launch-terminal-btn');
-    dom.shellTabs = document.getElementById('shell-tabs');
-    dom.codeEnv = document.getElementById('env-code-block');
-    dom.codeCCSwitch = document.getElementById('ccswitch-code-block');
-    dom.btnCopyEnv = document.getElementById('copy-env-btn');
-    dom.btnCopyCCSwitch = document.getElementById('copy-ccswitch-btn');
+    dom.syncProfileName = document.getElementById('sync-profile-name');
+    dom.syncListenAddress = document.getElementById('sync-listen-address');
+    dom.syncCliState = document.getElementById('sync-cli-state');
+    dom.syncVscodeState = document.getElementById('sync-vscode-state');
+    dom.syncClaudeState = document.getElementById('sync-claude-state');
+    dom.syncCliDot = document.getElementById('sync-cli-dot');
+    dom.syncVscodeDot = document.getElementById('sync-vscode-dot');
+    dom.syncClaudeDot = document.getElementById('sync-claude-dot');
 
     // History
     dom.tbodyHistory = document.getElementById('history-tbody');
     dom.clearHistoryBtn = document.getElementById('clear-history-btn');
+    dom.tokenProfileLabel = document.getElementById('token-profile-label');
+    dom.tokenLogLabel = document.getElementById('token-log-label');
 
     // Header & footer
     dom.statusPill = document.getElementById('statusPill');
@@ -503,6 +842,10 @@ function cacheDom() {
     // Version stamps
     dom.appVersion = document.getElementById('app-version');
     dom.aboutVersion = document.getElementById('about-version');
+
+    // Loading overlay
+    dom.loadingOverlay = document.getElementById('loadingOverlay');
+    dom.loadingRetryBtn = document.getElementById('loadingRetryBtn');
 
     // Modals
     dom.closeDialogOverlay = document.getElementById('closeDialogOverlay');
@@ -531,15 +874,49 @@ function toast(message, type, options) {
     const el = document.createElement('div');
     el.className = `toast toast-${type}`;
 
-    let html = TOAST_ICONS[type] || TOAST_ICONS.info;
-    html += `<span class="toast-msg">${escapeHtml(message)}</span>`;
-
-    if (actionCallback) {
-        html += `<button class="toast-action">${escapeHtml(actionLabel)}</button>`;
+    // Build toast DOM safely using DOM API instead of innerHTML
+    const iconContainer = document.createElement('span');
+    iconContainer.innerHTML = TOAST_ICONS[type] || TOAST_ICONS.info;
+    const svg = iconContainer.querySelector('svg');
+    if (svg) {
+        el.appendChild(svg);
     }
-    html += `<button class="toast-close" aria-label="Close notification"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>`;
 
-    el.innerHTML = html;
+    const msgSpan = document.createElement('span');
+    msgSpan.className = 'toast-msg';
+    msgSpan.textContent = message;
+    el.appendChild(msgSpan);
+
+    let actionBtn = null;
+    if (actionCallback) {
+        actionBtn = document.createElement('button');
+        actionBtn.className = 'toast-action';
+        actionBtn.textContent = actionLabel;
+        el.appendChild(actionBtn);
+    }
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'toast-close';
+    closeBtn.setAttribute('aria-label', 'Close notification');
+    const closeSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    closeSvg.setAttribute('viewBox', '0 0 24 24');
+    closeSvg.setAttribute('fill', 'none');
+    closeSvg.setAttribute('stroke', 'currentColor');
+    closeSvg.setAttribute('stroke-width', '2');
+    const line1 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line1.setAttribute('x1', '18');
+    line1.setAttribute('y1', '6');
+    line1.setAttribute('x2', '6');
+    line1.setAttribute('y2', '18');
+    const line2 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line2.setAttribute('x1', '6');
+    line2.setAttribute('y1', '6');
+    line2.setAttribute('x2', '18');
+    line2.setAttribute('y2', '18');
+    closeSvg.appendChild(line1);
+    closeSvg.appendChild(line2);
+    closeBtn.appendChild(closeSvg);
+    el.appendChild(closeBtn);
 
     let activeTimer = null;
     const dismiss = () => {
@@ -549,8 +926,7 @@ function toast(message, type, options) {
         el.addEventListener('animationend', () => { if (el.parentNode) el.remove(); }, { once: true });
     };
 
-    el.querySelector('.toast-close').addEventListener('click', dismiss);
-    const actionBtn = el.querySelector('.toast-action');
+    closeBtn.addEventListener('click', dismiss);
     if (actionBtn && actionCallback) {
         actionBtn.addEventListener('click', () => { actionCallback(); dismiss(); });
     }
@@ -585,11 +961,11 @@ function hideModal(overlayEl) {
 }
 // ══════════════════════════════════════════════════════
 
-function setProxyConnectionState(state) {
+function setProxyConnectionState(state, detail) {
     const meta = {
         connecting: { text: t('status_connecting'), className: 'connecting' },
-        online:     { text: t('status_online'),     className: 'online' },
-        offline:    { text: t('status_offline'),     className: 'offline' }
+        online: { text: t('status_online'), className: 'online' },
+        offline: { text: t('status_offline'), className: 'offline' }
     }[state];
     if (!meta) return;
 
@@ -598,7 +974,7 @@ function setProxyConnectionState(state) {
         el.classList.remove('online', 'offline', 'connecting');
         el.classList.add(meta.className);
         const textSpan = el.querySelector('span:last-child');
-        if (textSpan) textSpan.textContent = meta.text;
+        if (textSpan) textSpan.textContent = detail || meta.text;
     });
 }
 
@@ -608,51 +984,320 @@ function showDashboardContent() {
     isLoadingDashboard = false;
 }
 
-async function resolveApiBase() {
+function showLoadingOverlay(show, showRetry) {
+    const overlay = document.getElementById('loadingOverlay');
+    const retryBtn = document.getElementById('loadingRetryBtn');
+    if (!overlay) return;
+    if (show) {
+        overlay.classList.remove('hidden');
+        if (retryBtn) retryBtn.classList.add('hidden');
+    } else {
+        overlay.classList.add('hidden');
+        if (retryBtn && showRetry) {
+            retryBtn.classList.remove('hidden');
+        }
+    }
+}
+
+async function fetchAndDisplayVersion() {
     try {
+        const resp = await apiFetch('/ocgt/api/version');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const ver = data.version || APP_VERSION;
+        if (dom.appVersion) dom.appVersion.textContent = `v${ver}`;
+        if (dom.aboutVersion) dom.aboutVersion.textContent = `v${ver}`;
+    } catch (_) {
+        // fallback to hardcoded version
+        if (dom.appVersion) dom.appVersion.textContent = APP_VERSION;
+        if (dom.aboutVersion) dom.aboutVersion.textContent = APP_VERSION;
+    }
+}
+
+async function resolveApiBase() {
+
+    // Wait for Wails binding to be injected (up to 5s)
+
+    for (let i = 0; i < 50; i++) {
+
+        if (window.go && window.go.main && window.go.main.App) break;
+
+        await delay(100);
+
+    }
+
+    try {
+
         const addr = await callWails('GetListenAddress');
+
         if (addr) API_BASE = `http://${addr}`;
+
     } catch (err) { console.error('Wails GetListenAddress error:', err); }
+
 }
 
 async function waitForProxyReady(timeoutMs) {
-    timeoutMs = timeoutMs || 2500;
+
+    timeoutMs = timeoutMs || 15000;
+
     const started = Date.now();
+
     while (Date.now() - started < timeoutMs) {
+
         try {
-            const resp = await apiFetch('/healthz', { cache: 'no-store' }, 700);
+
+            const resp = await apiFetch('/healthz', { cache: 'no-store' }, 1000);
+
             if (resp.ok) return true;
+
         } catch (_) { /* retry */ }
-        await delay(350);
+
+        await delay(500);
+
     }
+
     return false;
+
+}
+
+async function isProxyHealthy() {
+    try {
+        const resp = await apiFetch('/healthz', { cache: 'no-store' }, 1200);
+        return resp.ok;
+    } catch (_) {
+        return false;
+    }
+}
+
+async function getProxyStartupDetail() {
+    try {
+        const diagnostics = await callWails('GetProxyStartupStatus');
+        if (!diagnostics) return '';
+        if (diagnostics.listen && dom.elListen) {
+            dom.elListen.textContent = diagnostics.listen;
+        }
+        if (diagnostics.last_error) {
+            return diagnostics.last_error;
+        }
+        if (diagnostics.healthy === false) {
+            return '代理端口未响应 /healthz';
+        }
+    } catch (err) {
+        console.error('Proxy diagnostics failed:', err);
+    }
+    return '';
+}
+
+// ── Dynamic Model Select Rendering ──
+function populateModelSelects() {
+    const i18nKey = (m) => `opt_model_${m.id.replace(/[.-]/g, '_')}`;
+    document.querySelectorAll('select[data-model-source]').forEach(sel => {
+        const source = sel.dataset.modelSource;
+        const saved = sel.value;
+        sel.innerHTML = '';
+
+        if (source === 'default') {
+
+            // Default model selector — flat list grouped by category
+
+            MODEL_REGISTRY.forEach(m => {
+
+                const opt = document.createElement('option');
+
+                opt.value = m.id;
+
+                opt.textContent = m.label;
+
+                sel.appendChild(opt);
+
+            });
+
+            const custom = document.createElement('option');
+            custom.value = 'custom';
+            custom.textContent = '-- Custom Model --';
+            sel.appendChild(custom);
+        } else {
+            // Mapping selector — only high-tier models + custom
+            const mappingTargets = MODEL_REGISTRY.filter(m => m.recommended || ['minimax-m2.7', 'mimo-v2.5-pro', 'mimo-v2.5', 'kimi-k2.5', 'glm-5', 'qwen3.5-plus', 'deepseek-v4-flash', 'kimi-k2.6', 'qwen3.6-plus', 'deepseek-v4-pro', 'glm-5.1'].includes(m.id));
+            const defaultId = MAPPING_DEFAULTS[source];
+            // Deduplicate by id
+            const seen = new Set();
+            // Put default first
+            const ordered = [];
+            if (defaultId) {
+                const def = mappingTargets.find(m => m.id === defaultId);
+                if (def) ordered.push(def);
+            }
+            mappingTargets.forEach(m => { if (!seen.has(m.id) && m.id !== defaultId) { seen.add(m.id); ordered.push(m); } });
+            // Fallback: if defaultId not in mappingTargets, still add it
+            if (defaultId && !ordered.find(m => m.id === defaultId)) {
+                const def = MODEL_REGISTRY.find(m => m.id === defaultId);
+                if (def) ordered.unshift(def);
+            }
+            ordered.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m.id;
+                opt.textContent = m.label;
+                sel.appendChild(opt);
+            });
+
+            const custom = document.createElement('option');
+            custom.value = 'custom';
+            custom.textContent = '-- Custom Model --';
+            sel.appendChild(custom);
+        }
+        // Restore previous value
+        if (saved) setSelectValue(sel, saved);
+    });
+}
+
+// ── Accent Color System ──
+function persistUIPreferencesSoon() {
+    if (!uiPreferencesLoaded) return;
+    if (uiPreferencesSaveTimer) clearTimeout(uiPreferencesSaveTimer);
+    uiPreferencesSaveTimer = window.setTimeout(() => {
+        saveUIPreferences().catch(err => console.error('Failed to save UI preferences:', err));
+    }, 250);
+}
+
+function getActiveViewId() {
+    const activeItem = document.querySelector('.nav-item.active');
+    return normalizeView(activeItem ? activeItem.dataset.view : localStorage.getItem('last-view'));
+}
+
+function getExpandedIntegrationIds() {
+    return Array.from(document.querySelectorAll('.integration-row.expanded'))
+        .map(row => row.dataset.integration)
+        .filter(id => INTEGRATION_IDS.includes(id));
+}
+
+function applyExpandedIntegrationIds(ids) {
+    const expanded = new Set(parseExpandedIntegrations(ids));
+    document.querySelectorAll('.integration-row').forEach(row => {
+        const isExpanded = expanded.has(row.dataset.integration);
+        row.classList.toggle('expanded', isExpanded);
+        const btn = row.querySelector('.ir-expand-btn');
+        if (btn) btn.setAttribute('aria-expanded', String(isExpanded));
+    });
+}
+
+async function saveUIPreferences() {
+    const theme = normalizeTheme(localStorage.getItem('theme') || 'system');
+    const language = normalizeLanguage(currentLang);
+    const accentHue = normalizeHue(localStorage.getItem('accent-hue') || '174');
+    const lastView = getActiveViewId();
+    const shell = normalizeCompactShell(compactShell);
+    const expanded = JSON.stringify(getExpandedIntegrationIds());
+    localStorage.setItem('last-view', lastView);
+    localStorage.setItem('compact-shell', shell);
+    localStorage.setItem('expanded-integrations', expanded);
+
+    const app = getWailsApp();
+    if (app && typeof app.SaveUIPreferences === 'function') {
+        const res = await app.SaveUIPreferences(theme, language, accentHue, lastView, shell, expanded);
+        if (res && res !== 'success') console.warn('SaveUIPreferences:', res);
+    }
+}
+
+function applyAccentHue(hue, options = {}) {
+    hue = normalizeHue(hue);
+    document.documentElement.style.setProperty('--accent-h', hue);
+    localStorage.setItem('accent-hue', hue);
+    syncAccentDots(hue);
+    if (options.persist !== false) persistUIPreferencesSoon();
+}
+
+function syncAccentDots(hue) {
+
+    document.querySelectorAll('.sp-accent-dot').forEach(d => {
+
+        d.classList.toggle('active', d.dataset.accentHue === String(hue));
+
+    });
+
+    // Update custom input if hue doesn't match any preset
+
+    const presetHues = ACCENT_PRESETS.map(p => String(p.hue));
+
+    const accentInput = document.getElementById('accentCustomInput');
+
+    if (accentInput) {
+
+        accentInput.value = presetHues.includes(String(hue)) ? '' : hue;
+
+    }
+
+}
+
+function initAccentColor() {
+    const saved = localStorage.getItem('accent-hue');
+    const hue = saved != null ? Number(saved) : 174; // default teal
+    applyAccentHue(hue, { persist: false });
 }
 
 async function initializeApp() {
+
     if (isInitializing) return;
+
     isInitializing = true;
+
+
     setProxyConnectionState('connecting');
+
+    showLoadingOverlay(true);
+
     await resolveApiBase();
 
+
+
+
     // Fetch local auth token from Wails (silently fails in browser mode)
-    try { const t = await callWails('GetLocalToken'); if (t) LOCAL_AUTH_TOKEN = t; } catch (_) {}
+
+    try { const t = await callWails('GetLocalToken'); if (t) LOCAL_AUTH_TOKEN = t; } catch (_) { }
+
+
 
     proxyReady = await waitForProxyReady();
+
+
     if (!proxyReady) {
-        setProxyConnectionState('offline');
+
+        const detail = await getProxyStartupDetail();
+
+        setProxyConnectionState('offline', detail);
+
         showDashboardContent();
+
+        showLoadingOverlay(false, true);
+
         isInitializing = false;
+
         return;
+
     }
     setProxyConnectionState('online');
     try {
-        await Promise.all([loadStatus(), loadProfiles(), loadHistory(), loadPreferences()]);
+        const results = await Promise.allSettled([loadStatus(), loadProfiles(), loadHistory(), loadPreferences()]);
+        const statusOK = results[0].status === 'fulfilled' && results[0].value;
+        if (!statusOK) {
+            const healthy = await isProxyHealthy();
+            proxyReady = healthy;
+            setProxyConnectionState(healthy ? 'online' : 'offline');
+        }
+        await fetchAndDisplayVersion();
+        _consecutiveFailures = 0;
     } catch (err) {
         console.error('Error during initial load:', err);
-        proxyReady = false;
-        setProxyConnectionState('offline');
+        _consecutiveFailures++;
+        // Only go offline after 3 consecutive failures to tolerate transient errors
+        if (_consecutiveFailures >= 3) {
+            const healthy = await isProxyHealthy();
+            proxyReady = healthy;
+            setProxyConnectionState(healthy ? 'online' : 'offline');
+        }
     } finally {
         isInitializing = false;
+        showLoadingOverlay(false, false);
     }
 }
 
@@ -695,6 +1340,82 @@ function setThinkingBudgetValue(value) {
     dom.inputThinkingBudget.value = value;
 }
 
+function orderedJSONString(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return '{}';
+    const ordered = {};
+    Object.keys(value).sort().forEach(key => {
+        ordered[key] = String(value[key]);
+    });
+    return JSON.stringify(ordered, null, 2);
+}
+
+function parseClaudeEnvTemplate() {
+    if (!dom.inputClaudeEnvTemplate) {
+        return { ...((systemStatus && systemStatus.claude_env) || {}) };
+    }
+    const raw = dom.inputClaudeEnvTemplate.value.trim();
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error(t('err_claude_env_json'));
+    }
+    const out = {};
+    Object.entries(parsed).forEach(([key, value]) => {
+        if (typeof key !== 'string' || typeof value !== 'string') {
+            throw new Error(t('err_claude_env_json'));
+        }
+        out[key] = value;
+    });
+    return out;
+}
+
+function applyDynamicClaudeEnv(env, client) {
+    const listen = systemStatus && systemStatus.listen ? systemStatus.listen : '127.0.0.1:8787';
+    const profile = dom.selectProfile && dom.selectProfile.value ? dom.selectProfile.value : (systemStatus && systemStatus.active_profile) || 'opencode-go';
+    const sonnet = dom.inputSonnetMapping && dom.inputSonnetMapping.value ? dom.inputSonnetMapping.value : '';
+    const haiku = dom.inputHaikuMapping && dom.inputHaikuMapping.value ? dom.inputHaikuMapping.value : '';
+    const opus = dom.inputOpusMapping && dom.inputOpusMapping.value ? dom.inputOpusMapping.value : '';
+    const thinkingBudget = dom.inputThinkingBudget && dom.inputThinkingBudget.value ? Number(dom.inputThinkingBudget.value) : 512;
+
+    if (opus) env.ANTHROPIC_DEFAULT_OPUS_MODEL = opus;
+    if (sonnet) env.ANTHROPIC_DEFAULT_SONNET_MODEL = sonnet;
+    if (haiku) {
+        env.ANTHROPIC_DEFAULT_HAIKU_MODEL = haiku;
+        env.ANTHROPIC_SMALL_FAST_MODEL = haiku;
+        env.CLAUDE_CODE_SUBAGENT_MODEL = haiku;
+    }
+    env.ANTHROPIC_BASE_URL = `http://${listen}`;
+    env.ANTHROPIC_CUSTOM_HEADERS = `X-Ocgt-Profile: ${profile}, X-Ocgt-Client: ${client}`;
+    env.OCGT_PROFILE = profile;
+    if (LOCAL_AUTH_TOKEN) {
+        env.ANTHROPIC_AUTH_TOKEN = LOCAL_AUTH_TOKEN;
+        delete env.ANTHROPIC_API_KEY;
+    } else {
+        env.ANTHROPIC_API_KEY = 'ocgt-local-proxy';
+    }
+    if (thinkingBudget < 0) {
+        env.MAX_THINKING_TOKENS = '0';
+        env.CLAUDE_CODE_DISABLE_THINKING = '1';
+    } else {
+        env.MAX_THINKING_TOKENS = String(thinkingBudget || 512);
+        delete env.CLAUDE_CODE_DISABLE_THINKING;
+    }
+    return env;
+}
+
+function buildClaudeEnvForClient(client) {
+    const env = parseClaudeEnvTemplate();
+    return applyDynamicClaudeEnv(env, client || 'claude-code-cli');
+}
+
+function shellQuotePowerShell(value) {
+    return `"${String(value).replace(/`/g, '``').replace(/\$/g, '`$').replace(/"/g, '`"')}"`;
+}
+
+function shellQuoteBash(value) {
+    return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
 async function loadStatus() {
     try {
         const resp = await apiFetch('/ocgt/api/status');
@@ -704,6 +1425,19 @@ async function loadStatus() {
         dom.elListen.textContent = systemStatus.listen;
         dom.elUpstream.textContent = systemStatus.upstream;
         dom.elProfile.textContent = systemStatus.active_profile;
+        if (dom.inputUpstream && !document.activeElement.isSameNode(dom.inputUpstream)) {
+            dom.inputUpstream.value = systemStatus.upstream || '';
+        }
+        if (dom.inputRateLimit && !document.activeElement.isSameNode(dom.inputRateLimit)) {
+            dom.inputRateLimit.value = systemStatus.rate_limit_per_second || '';
+        }
+        if (dom.inputRateBurst && !document.activeElement.isSameNode(dom.inputRateBurst)) {
+            dom.inputRateBurst.value = systemStatus.rate_limit_burst || '';
+        }
+        if (dom.inputClaudeEnvTemplate && !document.activeElement.isSameNode(dom.inputClaudeEnvTemplate)) {
+            const envTemplate = { ...(systemStatus.claude_env || {}) };
+            dom.inputClaudeEnvTemplate.value = orderedJSONString(applyDynamicClaudeEnv(envTemplate, 'claude-code-cli'));
+        }
 
         // Model
         if (systemStatus.default_model) {
@@ -712,15 +1446,6 @@ async function loadStatus() {
         } else {
             dom.elModel.textContent = t('status_not_configured');
             dom.elModel.classList.add('not-configured');
-        }
-
-        // Config path
-        if (systemStatus.config_path) {
-            dom.elConfigPath.textContent = systemStatus.config_path;
-            dom.elConfigPath.classList.remove('not-configured');
-        } else {
-            dom.elConfigPath.textContent = t('status_not_configured');
-            dom.elConfigPath.classList.add('not-configured');
         }
 
         // API Key
@@ -747,25 +1472,40 @@ async function loadStatus() {
             }
         }
 
-        renderEnvCode();
-        renderCCSwitchCode();
+        renderCompactEnvCode();
+        updateConfigSyncStrip();
+        updateTokenContext();
+        updateRateLimitDisplay();
         updateLastUpdated();
         showDashboardContent();
         setProxyConnectionState('online');
 
         // Show unconfigured key warning in badge
+
         if (systemStatus.api_key_configured === false && dom.uptimeBadge) {
+
             const textSpan = dom.uptimeBadge.querySelector('span:last-child');
+
             if (textSpan) textSpan.textContent = t('status_connected_no_key');
+
         }
+
         return true;
+
     } catch (err) {
+
         console.error('Error fetching status:', err);
-        proxyReady = false;
-        setProxyConnectionState('offline');
+
+        const healthy = await isProxyHealthy();
+        proxyReady = healthy;
+        setProxyConnectionState(healthy ? 'online' : 'offline');
+
         showDashboardContent();
+
         return false;
+
     }
+
 }
 
 async function loadProfiles() {
@@ -791,14 +1531,24 @@ async function loadProfiles() {
             setSelectValue(dom.inputOpusMapping, aliases.opus || '');
         }
         captureOriginalSettings();
+
         clearChangesDetected();
+
         return true;
+
     } catch (err) {
+
         console.error('Error loading profiles:', err);
-        proxyReady = false;
-        setProxyConnectionState('offline');
+
+        if (!(await isProxyHealthy())) {
+            proxyReady = false;
+            setProxyConnectionState('offline');
+        }
+
         return false;
+
     }
+
 }
 
 async function loadHistory() {
@@ -806,25 +1556,71 @@ async function loadHistory() {
         const resp = await apiFetch('/ocgt/api/history');
         if (!resp.ok) throw new Error('Failed');
         renderHistoryTable(await resp.json());
+
         return true;
+
     } catch (err) {
+
         console.error('Error loading history:', err);
-        proxyReady = false;
-        setProxyConnectionState('offline');
+
+        if (!(await isProxyHealthy())) {
+            proxyReady = false;
+            setProxyConnectionState('offline');
+        }
+
         return false;
+
     }
+
 }
 
 async function loadPreferences() {
-    if (!dom.inputCloseBehavior) return;
+    if (!dom.inputCloseBehavior && !dom.inputLogEnabled) return;
     try {
         const prefs = await callWails('GetPreferences');
-        dom.inputCloseBehavior.value = normalizeCloseBehavior(prefs && prefs.close_behavior);
+        if (dom.inputCloseBehavior) {
+            dom.inputCloseBehavior.value = normalizeCloseBehavior(prefs && prefs.close_behavior);
+        }
+        if (dom.inputLogEnabled) {
+            dom.inputLogEnabled.checked = !prefs || prefs.log_enabled !== 'false';
+        }
+        if (dom.inputLogDirectory) {
+            dom.inputLogDirectory.value = (prefs && prefs.log_directory) || '';
+        }
+        if (dom.inputLogRetention) {
+            dom.inputLogRetention.value = (prefs && prefs.log_retention_days) || '14';
+        }
+        applyUIPreferences(prefs || {});
+        updateTokenContext();
         captureOriginalSettings();
     } catch (err) {
         console.error('Failed to load preferences:', err);
-        dom.inputCloseBehavior.value = DEFAULT_CLOSE_BEHAVIOR;
+        if (dom.inputCloseBehavior) dom.inputCloseBehavior.value = DEFAULT_CLOSE_BEHAVIOR;
+        if (dom.inputLogEnabled) dom.inputLogEnabled.checked = true;
+        if (dom.inputLogRetention) dom.inputLogRetention.value = '14';
+        applyUIPreferences({});
     }
+}
+
+function applyUIPreferences(prefs) {
+    uiPreferencesLoaded = false;
+    const theme = normalizeTheme(prefs.theme || localStorage.getItem('theme') || 'system');
+    const language = normalizeLanguage(prefs.language || localStorage.getItem('lang') || currentLang);
+    const accentHue = normalizeHue(prefs.accent_hue || localStorage.getItem('accent-hue') || 174);
+    const lastView = normalizeView(prefs.last_view || localStorage.getItem('last-view') || 'dashboard');
+    const shell = normalizeCompactShell(prefs.compact_shell || localStorage.getItem('compact-shell') || compactShell);
+    const expanded = parseExpandedIntegrations(prefs.expanded_integrations || localStorage.getItem('expanded-integrations') || '[]');
+
+    applyTheme(theme, { persist: false });
+    applyAccentHue(accentHue, { persist: false });
+    currentLang = language;
+    localStorage.setItem('lang', language);
+    if (dom.prefLangSelect) dom.prefLangSelect.value = language;
+    updateLanguageDOM();
+    setActiveView(lastView, { persist: false });
+    setCompactShell(shell, { persist: false });
+    applyExpandedIntegrationIds(expanded);
+    uiPreferencesLoaded = true;
 }
 // ══════════════════════════════════════════════════════
 
@@ -832,12 +1628,16 @@ function getSettingsSnapshot() {
     return {
         profile: dom.selectProfile ? dom.selectProfile.value : '',
         apiKey: dom.inputApiKey ? dom.inputApiKey.value : '',
+        upstream: dom.inputUpstream ? dom.inputUpstream.value : '',
         defaultModel: dom.inputDefaultModel ? dom.inputDefaultModel.value : '',
         sonnet: dom.inputSonnetMapping ? dom.inputSonnetMapping.value : '',
         haiku: dom.inputHaikuMapping ? dom.inputHaikuMapping.value : '',
         opus: dom.inputOpusMapping ? dom.inputOpusMapping.value : '',
         timeout: dom.inputTimeout ? dom.inputTimeout.value : '',
         thinkingBudget: dom.inputThinkingBudget ? dom.inputThinkingBudget.value : '',
+        rateLimit: dom.inputRateLimit ? dom.inputRateLimit.value : '',
+        rateBurst: dom.inputRateBurst ? dom.inputRateBurst.value : '',
+        claudeEnvTemplate: dom.inputClaudeEnvTemplate ? dom.inputClaudeEnvTemplate.value : '',
         closeBehavior: dom.inputCloseBehavior ? dom.inputCloseBehavior.value : ''
     };
 }
@@ -846,16 +1646,75 @@ function captureOriginalSettings() {
     originalSettingsValues = getSettingsSnapshot();
 }
 
+function restoreSettingsFromSnapshot(snapshot) {
+    if (!snapshot) return;
+    if (dom.selectProfile) dom.selectProfile.value = snapshot.profile || '';
+    if (dom.inputApiKey) dom.inputApiKey.value = snapshot.apiKey || '';
+    if (dom.inputUpstream) dom.inputUpstream.value = snapshot.upstream || '';
+    if (dom.inputDefaultModel) setSelectValue(dom.inputDefaultModel, snapshot.defaultModel || '');
+    if (dom.inputSonnetMapping) setSelectValue(dom.inputSonnetMapping, snapshot.sonnet || '');
+    if (dom.inputHaikuMapping) setSelectValue(dom.inputHaikuMapping, snapshot.haiku || '');
+    if (dom.inputOpusMapping) setSelectValue(dom.inputOpusMapping, snapshot.opus || '');
+    if (dom.inputTimeout) dom.inputTimeout.value = snapshot.timeout || '300';
+    if (dom.inputThinkingBudget) setThinkingBudgetValue(snapshot.thinkingBudget || '512');
+    if (dom.inputRateLimit) dom.inputRateLimit.value = snapshot.rateLimit || '';
+    if (dom.inputRateBurst) dom.inputRateBurst.value = snapshot.rateBurst || '';
+    if (dom.inputClaudeEnvTemplate) dom.inputClaudeEnvTemplate.value = snapshot.claudeEnvTemplate || '{}';
+    if (dom.inputCloseBehavior) dom.inputCloseBehavior.value = normalizeCloseBehavior(snapshot.closeBehavior);
+    clearFieldErrors();
+    clearChangesDetected();
+    renderCompactEnvCode();
+}
+
+function updateConfigSyncStrip() {
+    if (dom.syncProfileName) dom.syncProfileName.textContent = systemStatus && systemStatus.active_profile ? systemStatus.active_profile : '-';
+    if (dom.syncListenAddress) dom.syncListenAddress.textContent = systemStatus && systemStatus.listen ? systemStatus.listen : '-';
+}
+
+function setSyncState(textEl, dotEl, active) {
+    if (textEl) textEl.textContent = '';
+    if (dotEl) dotEl.classList.toggle('inactive', !active);
+}
+
+function updateTokenContext() {
+    if (dom.tokenProfileLabel) {
+        const profile = systemStatus && systemStatus.active_profile ? systemStatus.active_profile : '-';
+        dom.tokenProfileLabel.textContent = `Profile: ${profile}`;
+    }
+    if (dom.tokenLogLabel) {
+        const enabled = !dom.inputLogEnabled || dom.inputLogEnabled.checked;
+        dom.tokenLogLabel.textContent = enabled ? t('token_log_on') : t('token_log_off');
+        dom.tokenLogLabel.classList.toggle('inactive', !enabled);
+    }
+}
+
+function updateRateLimitDisplay() {
+    const limitEl = document.getElementById('traffic-stat-limit');
+    if (!limitEl) return;
+    const perSecond = Number(systemStatus && systemStatus.rate_limit_per_second);
+    const burst = Number(systemStatus && systemStatus.rate_limit_burst);
+    if (perSecond > 0 && burst > 0) {
+        limitEl.textContent = `${perSecond}/s`;
+        limitEl.title = `burst ${burst}`;
+    } else {
+        limitEl.textContent = '--';
+        limitEl.removeAttribute('title');
+    }
+}
+
 function checkForChanges() {
     const current = getSettingsSnapshot();
     const hasChanges = Object.keys(originalSettingsValues).some(k => current[k] !== originalSettingsValues[k]);
+    renderCompactEnvCode();
 
     if (hasChanges && dom.configActions) {
         dom.configActions.classList.add('changes-detected');
         dom.btnSaveAllConfig.textContent = `\u26A1 ${t('btn_save_config')} \u00B7 ${t('hint_changes_detected')}`;
+        if (dom.btnCancelConfig) dom.btnCancelConfig.disabled = false;
     } else if (dom.configActions) {
         dom.configActions.classList.remove('changes-detected');
         dom.btnSaveAllConfig.textContent = t('btn_save_config');
+        if (dom.btnCancelConfig) dom.btnCancelConfig.disabled = true;
     }
 }
 
@@ -863,96 +1722,190 @@ function clearChangesDetected() {
     if (dom.configActions) {
         dom.configActions.classList.remove('changes-detected');
         dom.btnSaveAllConfig.textContent = t('btn_save_config');
+        if (dom.btnCancelConfig) dom.btnCancelConfig.disabled = true;
     }
     captureOriginalSettings();
 }
 // ══════════════════════════════════════════════════════
 
-function renderEnvCode() {
-    if (!systemStatus) return;
-    const { listen, active_profile: profile } = systemStatus;
-    const thinkingBudget = Number.isInteger(Number(systemStatus.max_thinking_budget_tokens))
-        ? Number(systemStatus.max_thinking_budget_tokens) : 512;
-    const thinkingLines = thinkingBudget < 0
-        ? {
-            powershell: `$env:MAX_THINKING_TOKENS = "0"\n$env:CLAUDE_CODE_DISABLE_THINKING = "1"`,
-            bash: `export MAX_THINKING_TOKENS="0"\nexport CLAUDE_CODE_DISABLE_THINKING="1"`,
-            cmd: `set MAX_THINKING_TOKENS=0\nset CLAUDE_CODE_DISABLE_THINKING=1`
-        }
-        : {
-            powershell: `$env:MAX_THINKING_TOKENS = "${thinkingBudget}"`,
-            bash: `export MAX_THINKING_TOKENS="${thinkingBudget}"`,
-            cmd: `set MAX_THINKING_TOKENS=${thinkingBudget}`
-        };
-    const authTokenLines = LOCAL_AUTH_TOKEN
-        ? {
-            powershell: `$env:ANTHROPIC_AUTH_TOKEN = "${LOCAL_AUTH_TOKEN}"\n`,
-            bash: `export ANTHROPIC_AUTH_TOKEN="${LOCAL_AUTH_TOKEN}"\n`,
-            cmd: `set ANTHROPIC_AUTH_TOKEN=${LOCAL_AUTH_TOKEN}\n`
-        }
-        : { powershell: '', bash: '', cmd: '' };
-    const templates = {
-        powershell: `$env:ANTHROPIC_BASE_URL = "http://${listen}"\n$env:ANTHROPIC_API_KEY = "ocgt-local-proxy"\n${authTokenLines.powershell}$env:ANTHROPIC_CUSTOM_HEADERS = "X-Ocgt-Profile: ${profile}"\nRemove-Item Env:ANTHROPIC_MODEL -ErrorAction SilentlyContinue\n${thinkingLines.powershell}`,
-        bash: `export ANTHROPIC_BASE_URL="http://${listen}"\nexport ANTHROPIC_API_KEY="ocgt-local-proxy"\n${authTokenLines.bash}export ANTHROPIC_CUSTOM_HEADERS="X-Ocgt-Profile: ${profile}"\nunset ANTHROPIC_MODEL\n${thinkingLines.bash}`,
-        cmd: `set ANTHROPIC_BASE_URL=http://${listen}\nset ANTHROPIC_API_KEY=ocgt-local-proxy\n${authTokenLines.cmd}set ANTHROPIC_CUSTOM_HEADERS=X-Ocgt-Profile: ${profile}\nset ANTHROPIC_MODEL=\n${thinkingLines.cmd}`
-    };
-    dom.codeEnv.innerText = templates[currentShell] || templates.powershell;
-}
-
-function renderCCSwitchCode() {
-    if (!systemStatus) return;
-    const { listen, active_profile: profile } = systemStatus;
-    const headers = { "X-Ocgt-Profile": profile };
-    if (LOCAL_AUTH_TOKEN) headers.Authorization = `Bearer ${LOCAL_AUTH_TOKEN}`;
-    dom.codeCCSwitch.innerText = JSON.stringify({
-        name: `ocgt-${profile}`, type: "anthropic",
-        baseURL: `http://${listen}`, apiKey: "ocgt-local-proxy",
-        model: "claude-sonnet-4-5",
-        headers
-    }, null, 2);
-}
+// Client integrations code renderers are handled dynamically inside integrations-grid section
 
 function renderHistoryTable(logs) {
+
     updateTrafficStats(logs);
+
     if (!logs || logs.length === 0) {
-        dom.tbodyHistory.innerHTML = `<tr class="empty-row"><td colspan="7"><div class="empty-state"><div class="empty-state-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></div><span>${t('traf_empty')}</span></div></td></tr>`;
+
+        dom.tbodyHistory.innerHTML = `<tr class="empty-row"><td colspan="9"><div class="empty-state"><div class="empty-state-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></div><span>${t('traf_empty')}</span></div></td></tr>`;
+
         return;
+
     }
+
     dom.tbodyHistory.innerHTML = logs.map(log => {
+
         const time = formatTime(new Date(log.time));
+
         const badge = statusBadge(log.status);
+
+        const tokens = log.tokens || log.total_tokens || '-';
+
         return `<tr>
+
             <td class="time-cell">${time}</td>
+
             <td class="method">${escapeHtml(log.method)}</td>
+
             <td class="path-cell" title="${escapeHtml(log.path)}">${escapeHtml(log.path)}</td>
+
             <td class="model-cell">${escapeHtml(log.model || '-')}</td>
+
+            <td class="client-cell">${escapeHtml(log.client || t('client_unknown'))}</td>
+
             <td>${badge}</td>
+
             <td class="duration-cell">${escapeHtml(log.duration)}</td>
+
+            <td class="tokens-cell">${escapeHtml(String(tokens))}</td>
+
             <td class="error-cell" title="${escapeHtml(log.error || '')}">${escapeHtml(log.error || '-')}</td>
+
         </tr>`;
+
     }).join('');
+
 }
 
 function updateTrafficStats(logs) {
+
     const totalEl = document.getElementById('traffic-stat-total');
+
     const successEl = document.getElementById('traffic-stat-success');
+
     const latencyEl = document.getElementById('traffic-stat-latency');
+
+    const tokensEl = document.getElementById('traffic-stat-tokens');
+
+    const tokenBarInput = document.getElementById('token-bar-input');
+
+    const tokenBarOutput = document.getElementById('token-bar-output');
+
+    const tokenInputCount = document.getElementById('token-input-count');
+
+    const tokenOutputCount = document.getElementById('token-output-count');
+
+    const tokenCacheCount = document.getElementById('token-cache-count');
+
+    const tokenBarTotalLabel = document.getElementById('token-bar-total-label');
+    const limitEl = document.getElementById('traffic-stat-limit');
+
+
+
     if (!totalEl || !successEl || !latencyEl) return;
+
     if (!logs || logs.length === 0) {
+
         totalEl.textContent = '0';
+
         successEl.textContent = '100.0%';
+
         latencyEl.textContent = '0ms';
+
+        if (tokensEl) tokensEl.textContent = '0';
+
+        if (tokenBarInput) tokenBarInput.style.width = '50%';
+
+        if (tokenBarOutput) tokenBarOutput.style.width = '50%';
+
+        if (tokenInputCount) tokenInputCount.textContent = '0';
+
+        if (tokenOutputCount) tokenOutputCount.textContent = '0';
+
+        if (tokenCacheCount) tokenCacheCount.textContent = '0';
+
+        if (tokenBarTotalLabel) tokenBarTotalLabel.textContent = t('token_total_label').replace('{{count}}', '0');
+        updateRateLimitDisplay();
+
         return;
+
     }
+
     const total = logs.length;
+
     let successCount = 0, totalLatencyMs = 0;
+
+    let totalInputTokens = 0, totalOutputTokens = 0, totalCacheReadTokens = 0, totalCacheCreationTokens = 0;
+
+
+
     logs.forEach(log => {
+
         if (log.status >= 200 && log.status < 300) successCount++;
+
         totalLatencyMs += parseDurationToMs(log.duration);
+
+
+
+        // Accumulate token stats
+
+        if (log.input_tokens) totalInputTokens += log.input_tokens;
+
+        if (log.output_tokens) totalOutputTokens += log.output_tokens;
+
+        if (log.cache_read_tokens) totalCacheReadTokens += log.cache_read_tokens;
+
+        if (log.cache_creation_tokens) totalCacheCreationTokens += log.cache_creation_tokens;
+
     });
+
+
+
     totalEl.textContent = total.toString();
+
     successEl.textContent = `${((successCount / total) * 100).toFixed(1)}%`;
+
     latencyEl.textContent = `${Math.round(totalLatencyMs / total)}ms`;
+
+
+
+    // Update token stats
+
+    const totalCacheTokens = totalCacheReadTokens + totalCacheCreationTokens;
+    const totalTokens = totalInputTokens + totalOutputTokens + totalCacheTokens;
+
+    if (tokensEl) tokensEl.textContent = totalTokens.toLocaleString();
+
+    if (tokenInputCount) tokenInputCount.textContent = totalInputTokens.toLocaleString();
+
+    if (tokenOutputCount) tokenOutputCount.textContent = totalOutputTokens.toLocaleString();
+
+    if (tokenCacheCount) tokenCacheCount.textContent = totalCacheTokens.toLocaleString();
+
+    if (tokenBarTotalLabel) tokenBarTotalLabel.textContent = t('token_total_label').replace('{{count}}', totalTokens.toLocaleString());
+    if (limitEl) updateRateLimitDisplay();
+
+
+
+    // Calculate bar widths
+
+    if (tokenBarInput && tokenBarOutput && totalTokens > 0) {
+
+        const inputPercent = (totalInputTokens / totalTokens) * 100;
+
+        const outputPercent = (totalOutputTokens / totalTokens) * 100;
+
+        tokenBarInput.style.width = `${inputPercent}%`;
+
+        tokenBarOutput.style.width = `${outputPercent}%`;
+
+    } else if (tokenBarInput && tokenBarOutput) {
+
+        tokenBarInput.style.width = '50%';
+
+        tokenBarOutput.style.width = '50%';
+
+    }
+
 }
 
 function parseDurationToMs(str) {
@@ -1052,14 +2005,29 @@ function updateLanguageDOM() {
         if (!dict[key]) return;
         const tag = el.tagName;
         if (['SPAN', 'BUTTON', 'H2', 'H3', 'H4', 'LABEL', 'P', 'TH', 'LI', 'OPTION'].includes(tag)) {
-            const textNodes = Array.from(el.childNodes).filter(node => node.nodeType === Node.TEXT_NODE);
             const value = dict[key];
-            // Use innerHTML when translation contains HTML tags (e.g. <code>claude</code>, <b>提示</b>)
-            const containsHTML = /<[a-z][\s>]/i.test(value);
+            // Use textContent for plain text; only allow specific safe HTML tags via DOM API
+            const containsHTML = /<[a-z]/i.test(value);
             if (containsHTML) {
-                el.innerHTML = value;
-            } else if (textNodes.length > 0) {
-                textNodes[textNodes.length - 1].textContent = value;
+                // Parse HTML safely: only allow <b>, <i>, <code>, <br>, <strong>, <em>
+                el.textContent = '';
+                const temp = document.createElement('div');
+                temp.innerHTML = value;
+                // Move only allowed child nodes
+                Array.from(temp.childNodes).forEach(node => {
+                    if (node.nodeType === Node.TEXT_NODE) {
+                        el.appendChild(document.createTextNode(node.textContent));
+                    } else if (node.nodeType === Node.ELEMENT_NODE) {
+                        const allowed = ['B', 'I', 'CODE', 'BR', 'STRONG', 'EM'];
+                        if (allowed.includes(node.tagName)) {
+                            const clone = node.cloneNode(true);
+                            el.appendChild(clone);
+                        } else {
+                            // For disallowed tags, just append text content
+                            el.appendChild(document.createTextNode(node.textContent));
+                        }
+                    }
+                });
             } else {
                 el.textContent = value;
             }
@@ -1089,9 +2057,9 @@ function updateActiveViewHeaders() {
     if (!titleEl || !subtitleEl) return;
     const meta = {
         dashboard: { title: t('title_dashboard'), subtitle: t('subtitle_dashboard') },
-        settings:  { title: t('title_settings'),  subtitle: t('subtitle_settings') },
-        terminal:  { title: t('title_terminal'),   subtitle: t('subtitle_terminal') },
-        history:   { title: t('title_history'),    subtitle: t('subtitle_history') }
+        settings: { title: t('title_settings'), subtitle: t('subtitle_settings') },
+        terminal: { title: t('title_terminal'), subtitle: t('subtitle_terminal') },
+        history: { title: t('title_history'), subtitle: t('subtitle_history') }
     }[viewId];
     if (meta) {
         titleEl.textContent = meta.title;
@@ -1101,20 +2069,26 @@ function updateActiveViewHeaders() {
 // ══════════════════════════════════════════════════════
 
 // ── 12a: Navigation ──
-function setupNavigation() {
+function setActiveView(viewId, options = {}) {
+    viewId = normalizeView(viewId);
     const navItems = document.querySelectorAll('.nav-item');
     const views = document.querySelectorAll('.view');
+    navItems.forEach(nav => nav.classList.toggle('active', nav.dataset.view === viewId));
+    views.forEach(v => v.classList.remove('active'));
+    const targetView = document.getElementById(`view-${viewId}`);
+    if (targetView) targetView.classList.add('active');
+    updateActiveViewHeaders();
+    if (options.persist !== false) {
+        localStorage.setItem('last-view', viewId);
+        persistUIPreferencesSoon();
+    }
+}
 
+function setupNavigation() {
+    const navItems = document.querySelectorAll('.nav-item');
     navItems.forEach(item => {
         item.addEventListener('click', () => {
-            const targetViewId = item.dataset.view;
-            if (!targetViewId) return;
-            navItems.forEach(nav => nav.classList.remove('active'));
-            item.classList.add('active');
-            views.forEach(v => v.classList.remove('active'));
-            const targetView = document.getElementById(`view-${targetViewId}`);
-            if (targetView) targetView.classList.add('active');
-            updateActiveViewHeaders();
+            if (item.dataset.view) setActiveView(item.dataset.view);
         });
     });
 
@@ -1192,11 +2166,16 @@ function setupSettingsHandlers() {
     if (dom.btnSaveAllConfig) {
         dom.btnSaveAllConfig.addEventListener('click', handleSaveConfig);
     }
+    if (dom.btnCancelConfig) {
+        dom.btnCancelConfig.disabled = true;
+        dom.btnCancelConfig.addEventListener('click', () => restoreSettingsFromSnapshot(originalSettingsValues));
+    }
 
     // Change detection on all settings inputs
     const settingsInputs = [
-        dom.selectProfile, dom.inputApiKey, dom.inputDefaultModel, dom.inputSonnetMapping,
+        dom.selectProfile, dom.inputApiKey, dom.inputUpstream, dom.inputDefaultModel, dom.inputSonnetMapping,
         dom.inputHaikuMapping, dom.inputOpusMapping, dom.inputTimeout, dom.inputThinkingBudget,
+        dom.inputRateLimit, dom.inputRateBurst, dom.inputClaudeEnvTemplate,
         dom.inputCloseBehavior
     ];
     settingsInputs.forEach(el => {
@@ -1206,29 +2185,55 @@ function setupSettingsHandlers() {
     });
 
     // Custom model select handling
+
     [dom.inputDefaultModel, dom.inputSonnetMapping, dom.inputHaikuMapping, dom.inputOpusMapping].forEach(selectEl => {
+
         if (!selectEl) return;
+
         selectEl.addEventListener('change', (e) => {
+
             if (e.target.value !== 'custom') return;
+
+            const previousValue = selectEl.value;
+
             const newVal = window.prompt(t('toast_custom_model_prompt'));
+
             if (newVal && newVal.trim()) {
+
                 const value = newVal.trim();
+
                 let exists = false;
+
                 for (let i = 0; i < selectEl.options.length; i++) {
+
                     if (selectEl.options[i].value === value) { selectEl.selectedIndex = i; exists = true; break; }
+
                 }
+
                 if (!exists) {
+
                     const opt = document.createElement('option');
+
                     opt.value = value;
+
                     opt.textContent = value;
+
                     selectEl.insertBefore(opt, selectEl.lastElementChild);
+
                     selectEl.value = value;
+
                 }
+
             } else {
-                selectEl.selectedIndex = 0;
+
+                selectEl.value = previousValue || selectEl.options[0].value;
+
             }
+
             checkForChanges();
+
         });
+
     });
 
     // Reset defaults — fixed: "Confirm" action now correctly triggers the reset
@@ -1240,13 +2245,25 @@ function setupSettingsHandlers() {
                 actionCallback: () => {
                     if (dom.inputTimeout) dom.inputTimeout.value = '300';
                     if (dom.inputThinkingBudget) setThinkingBudgetValue('512');
+                    if (dom.inputRateLimit) dom.inputRateLimit.value = '100';
+                    if (dom.inputRateBurst) dom.inputRateBurst.value = '200';
+                    if (dom.inputClaudeEnvTemplate && systemStatus) dom.inputClaudeEnvTemplate.value = orderedJSONString(systemStatus.claude_env || {});
                     if (dom.inputDefaultModel) setSelectValue(dom.inputDefaultModel, 'kimi-k2.6');
                     if (dom.inputSonnetMapping) setSelectValue(dom.inputSonnetMapping, 'qwen3.6-plus');
                     if (dom.inputHaikuMapping) setSelectValue(dom.inputHaikuMapping, 'deepseek-v4-flash');
                     if (dom.inputOpusMapping) setSelectValue(dom.inputOpusMapping, 'kimi-k2.6');
                     if (dom.inputCloseBehavior) dom.inputCloseBehavior.value = 'prompt';
-                    captureOriginalSettings();
-                    clearChangesDetected();
+                    applyTheme('system');
+                    applyAccentHue(174);
+                    currentLang = 'zh';
+                    localStorage.setItem('lang', currentLang);
+                    if (dom.prefLangSelect) dom.prefLangSelect.value = currentLang;
+                    updateLanguageDOM();
+                    setActiveView('dashboard');
+                    setCompactShell('powershell');
+                    applyExpandedIntegrationIds([]);
+                    checkForChanges();
+                    saveUIPreferences().catch(err => console.error('Failed to save reset UI preferences:', err));
                     toastI18n('toast_reset_done', 'success');
                 }
             });
@@ -1261,6 +2278,45 @@ function setupSettingsHandlers() {
             catch (err) { console.error('Failed to save close behavior:', err); }
         });
     }
+
+    [dom.inputLogEnabled, dom.inputLogDirectory, dom.inputLogRetention].forEach(el => {
+        if (!el) return;
+        el.addEventListener('change', () => saveLogPreferences(false));
+    });
+    if (dom.btnSaveLogPrefs) {
+        dom.btnSaveLogPrefs.addEventListener('click', () => saveLogPreferences(true));
+    }
+    if (dom.btnOpenLogDir) {
+        dom.btnOpenLogDir.addEventListener('click', async () => {
+            const res = await callWails('OpenLogLocation');
+            if (res && res !== 'success') toast(res, 'error');
+        });
+    }
+}
+
+async function saveLogPreferences(showToast) {
+    const app = getWailsApp();
+    if (!app || typeof app.SaveLogPreferences !== 'function') return;
+    const enabled = !!(dom.inputLogEnabled && dom.inputLogEnabled.checked);
+    const directory = dom.inputLogDirectory ? dom.inputLogDirectory.value.trim() : '';
+    const retention = Number(dom.inputLogRetention ? dom.inputLogRetention.value : 14);
+    if (!Number.isInteger(retention) || retention < 1 || retention > 365) {
+        if (showToast) toast(t('toast_log_prefs_failed') + ': 1-365', 'error');
+        return;
+    }
+    try {
+        const res = await app.SaveLogPreferences(enabled, directory, retention);
+        if (res === 'success') {
+            if (showToast) toastI18n('toast_log_prefs_saved', 'success');
+            await loadPreferences();
+            updateTokenContext();
+        } else if (showToast) {
+            toast(t('toast_log_prefs_failed') + ': ' + res, 'error');
+        }
+    } catch (err) {
+        console.error('Failed to save log preferences:', err);
+        if (showToast) toast(t('toast_log_prefs_failed') + ': ' + err.message, 'error');
+    }
 }
 
 async function handleSaveConfig() {
@@ -1270,18 +2326,47 @@ async function handleSaveConfig() {
     const sonnet = dom.inputSonnetMapping.value.trim();
     const haiku = dom.inputHaikuMapping.value.trim();
     const opus = dom.inputOpusMapping.value.trim();
+    const upstream = dom.inputUpstream ? dom.inputUpstream.value.trim() : '';
     const timeoutSeconds = dom.inputTimeout ? dom.inputTimeout.value.trim() : '300';
     const thinkingBudget = dom.inputThinkingBudget ? dom.inputThinkingBudget.value.trim() : '512';
+    const rateLimit = dom.inputRateLimit ? dom.inputRateLimit.value.trim() : '';
+    const rateBurst = dom.inputRateBurst ? dom.inputRateBurst.value.trim() : '';
     const timeoutNumber = Number(timeoutSeconds);
+    const rateLimitNumber = rateLimit ? Number(rateLimit) : 0;
+    const rateBurstNumber = rateBurst ? Number(rateBurst) : 0;
+    let claudeEnvTemplate = {};
 
     // Validation
     let hasErrors = false;
     clearFieldErrors();
+    if (upstream) {
+        try {
+            const parsedUpstream = new URL(upstream);
+            if (!['http:', 'https:'].includes(parsedUpstream.protocol)) throw new Error('invalid protocol');
+        } catch (_) {
+            setFieldError('field-upstream', t('err_upstream_url'));
+            hasErrors = true;
+        }
+    }
     if (!Number.isInteger(timeoutNumber) || timeoutNumber < 1 || timeoutNumber > 3600) {
         setFieldError('field-timeout', t('err_timeout_range'));
         hasErrors = true;
     }
+    if (rateLimit && (!Number.isInteger(rateLimitNumber) || rateLimitNumber < 1 || rateLimitNumber > 10000)) {
+        setFieldError('field-rate-limit', t('err_rate_limit_range'));
+        hasErrors = true;
+    }
+    if (rateBurst && (!Number.isInteger(rateBurstNumber) || rateBurstNumber < 1 || rateBurstNumber > 100000)) {
+        setFieldError('field-rate-burst', t('err_rate_burst_range'));
+        hasErrors = true;
+    }
     if (!ALLOWED_THINKING_BUDGETS.includes(thinkingBudget)) {
+        hasErrors = true;
+    }
+    try {
+        claudeEnvTemplate = buildClaudeEnvForClient('claude-code-cli');
+    } catch (err) {
+        setFieldError('field-claude-env-template', err.message || t('err_claude_env_json'));
         hasErrors = true;
     }
     if (hasErrors) {
@@ -1291,10 +2376,14 @@ async function handleSaveConfig() {
 
     setButtonState(dom.btnSaveAllConfig, 'saving');
     const app = getWailsApp();
+    if (dom.inputClaudeEnvTemplate) {
+        dom.inputClaudeEnvTemplate.value = orderedJSONString(claudeEnvTemplate);
+    }
 
     if (app) {
         try {
-            const res = await app.SaveProfileConfig(pName, key, defModel, sonnet, haiku, opus, timeoutSeconds, thinkingBudget);
+            const claudeEnvJSON = JSON.stringify(claudeEnvTemplate);
+            const res = await app.SaveProfileConfig(pName, key, defModel, sonnet, haiku, opus, timeoutSeconds, thinkingBudget, upstream, rateLimit, rateBurst, claudeEnvJSON);
             if (res === 'success') {
                 if (dom.inputCloseBehavior && typeof app.SavePreferences === 'function') {
                     const prefRes = await app.SavePreferences(normalizeCloseBehavior(dom.inputCloseBehavior.value));
@@ -1326,7 +2415,11 @@ async function handleSaveConfig() {
                     profile: pName, api_key: key, default_model: defModel,
                     model_aliases: { sonnet, haiku, opus },
                     request_timeout_seconds: timeoutNumber,
-                    max_thinking_budget_tokens: Number(thinkingBudget)
+                    max_thinking_budget_tokens: Number(thinkingBudget),
+                    upstream,
+                    rate_limit_per_second: rateLimitNumber,
+                    rate_limit_burst: rateBurstNumber,
+                    claude_env: claudeEnvTemplate
                 })
             });
             if (resp.ok) {
@@ -1349,122 +2442,352 @@ async function handleSaveConfig() {
 }
 
 // ── 12c: Terminal ──
-function setupTerminalHandlers() {
-    // Shell tabs
-    if (dom.shellTabs) {
-        dom.shellTabs.addEventListener('click', (e) => {
-            const btn = e.target.closest('.shell-tab');
-            if (!btn) return;
-            dom.shellTabs.querySelectorAll('.shell-tab').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            currentShell = btn.dataset.shell;
-            renderEnvCode();
+// ── 12c: Client Integrations (formerly Terminal) ──
+let compactShell = 'powershell';
+
+function setCompactShell(shell, options = {}) {
+    compactShell = normalizeCompactShell(shell);
+    if (dom.compactShellTabs) {
+        dom.compactShellTabs.querySelectorAll('.compact-tab').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.shell === compactShell);
         });
     }
+    localStorage.setItem('compact-shell', compactShell);
+    renderCompactEnvCode();
+    if (options.persist !== false) persistUIPreferencesSoon();
+}
 
-    // Launch terminal
+function setupTerminalHandlers() {
+    const toggleIntegrationRow = (row) => {
+        if (!row) return;
+        const btn = row.querySelector('.ir-expand-btn');
+        const expanded = !row.classList.contains('expanded');
+        row.classList.toggle('expanded', expanded);
+        if (btn) btn.setAttribute('aria-expanded', String(expanded));
+        persistUIPreferencesSoon();
+    };
+
+    document.querySelectorAll('.integration-row .ir-expand-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            toggleIntegrationRow(btn.closest('.integration-row'));
+        });
+    });
+    document.querySelectorAll('.integration-row .ir-main').forEach(rowMain => {
+        rowMain.addEventListener('click', (e) => {
+            if (e.target.closest('button, a, input, select, textarea, pre, code')) return;
+            toggleIntegrationRow(rowMain.closest('.integration-row'));
+        });
+        rowMain.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            if (e.target.closest('button, a, input, select, textarea')) return;
+            e.preventDefault();
+            toggleIntegrationRow(rowMain.closest('.integration-row'));
+        });
+        rowMain.tabIndex = 0;
+        rowMain.setAttribute('role', 'button');
+    });
+
+    // System Env Buttons
+    if (dom.btnSysEnvInstall) {
+        dom.btnSysEnvInstall.addEventListener('click', handleSysEnvInstall);
+    }
+    if (dom.btnSysEnvRemove) {
+        dom.btnSysEnvRemove.addEventListener('click', handleSysEnvRemove);
+    }
+
+    // VS Code Buttons
+    if (dom.btnVscodeInstall) {
+        dom.btnVscodeInstall.addEventListener('click', handleVscodeInstall);
+    }
+    if (dom.btnVscodeRemove) {
+        dom.btnVscodeRemove.addEventListener('click', handleVscodeRemove);
+    }
+
+    // Claude CLI Buttons
+    if (dom.btnSetupDesktop) {
+        dom.btnSetupDesktop.addEventListener('click', handleSetupDesktop);
+    }
+    if (dom.btnClearDesktop) {
+        dom.btnClearDesktop.addEventListener('click', handleClearDesktopConfig);
+    }
+    if (dom.btnSetupClaudeDesktopApp) {
+        dom.btnSetupClaudeDesktopApp.addEventListener('click', handleSetupClaudeDesktopApp);
+    }
+    if (dom.btnClearClaudeDesktopApp) {
+        dom.btnClearClaudeDesktopApp.addEventListener('click', handleClearClaudeDesktopApp);
+    }
     if (dom.btnLaunchTerminal) {
         dom.btnLaunchTerminal.addEventListener('click', handleLaunchTerminal);
     }
 
-    // Copy buttons
+    // Compact Shell Tabs
+    if (dom.compactShellTabs) {
+        dom.compactShellTabs.addEventListener('click', (e) => {
+            const btn = e.target.closest('.compact-tab');
+            if (!btn) return;
+            setCompactShell(btn.dataset.shell);
+        });
+    }
 
-    if (dom.btnCopyEnv) {
+    // Compact Copy Button
+    if (dom.compactCopyBtn) {
+        dom.compactCopyBtn.addEventListener('click', () => {
+            if (dom.compactEnvCode) {
+                copyText(dom.compactEnvCode.innerText, dom.compactCopyBtn);
+            }
+        });
+    }
 
-        dom.btnCopyEnv.addEventListener('click', () => copyText(dom.codeEnv.innerText, dom.btnCopyEnv));
+    // Periodic integration status updates
+
+    checkIntegrationsStatus();
+
+    if (getWailsApp()) {
+
+        integrationStatusTimer = setInterval(checkIntegrationsStatus, 12000);
 
     }
 
-    if (dom.btnCopyCCSwitch) {
-
-        dom.btnCopyCCSwitch.addEventListener('click', () => copyText(dom.codeCCSwitch.innerText, dom.btnCopyCCSwitch));
-
-    }
-
-
-
-    // Setup Claude Desktop
-
-    if (dom.btnSetupDesktop) {
-
-        dom.btnSetupDesktop.addEventListener('click', handleSetupDesktop);
-
-    }
-
-    if (dom.btnClearDesktop) {
-        dom.btnClearDesktop.addEventListener('click', handleClearDesktopConfig);
-    }
-
-    checkDesktopConfigStatus();
 }
 
-async function handleLaunchTerminal() {
-
+async function checkIntegrationsStatus() {
     const app = getWailsApp();
-
-    if (!app) {
-
-        toast(t('warn_desktop_only_launch'), 'warning');
-
-        return;
-
-    }
-
-    dom.btnLaunchTerminal.disabled = true;
-
-    const originalText = dom.btnLaunchTerminal.innerHTML;
-
-    dom.btnLaunchTerminal.innerHTML = `<span class="status-dot pulse" style="background-color:white;width:6px;height:6px;margin-right:8px;"></span>${t('term_launching')}`;
+    if (!app) return;
+    if (integrationStatusChecking) return;
+    integrationStatusChecking = true;
 
     try {
-
-        const res = await app.LaunchClaudeTerminal(currentShell, currentLang);
-
-        if (res === 'success') {
-
-            dom.btnLaunchTerminal.innerHTML = t('term_launched');
-
-            dom.btnLaunchTerminal.style.background = 'var(--green)';
-
-            toastI18n('toast_launch_success', 'success');
-
-            setTimeout(() => {
-
-                dom.btnLaunchTerminal.disabled = false;
-
-                dom.btnLaunchTerminal.innerHTML = originalText;
-
-                dom.btnLaunchTerminal.style.background = '';
-
-            }, 2000);
-
-        } else {
-
-            dom.btnLaunchTerminal.disabled = false;
-
-            dom.btnLaunchTerminal.innerHTML = originalText;
-
-            toast(t('toast_launch_failed') + ': ' + res, 'error');
-
-        }
-
+        const checks = await Promise.all([
+            typeof app.IsSystemEnvConfigured === 'function' ? app.IsSystemEnvConfigured().then(configured => ({ key: 'cli', configured })).catch(err => ({ key: 'cli', err })) : null,
+            typeof app.IsVSCodeConfigured === 'function' ? app.IsVSCodeConfigured().then(configured => ({ key: 'vscode', configured })).catch(err => ({ key: 'vscode', err })) : null,
+            typeof app.IsClaudeDesktopConfigured === 'function' ? app.IsClaudeDesktopConfigured().then(configured => ({ key: 'claude', configured })).catch(err => ({ key: 'claude', err })) : null,
+            typeof app.IsClaudeDesktopAppConfigured === 'function' ? app.IsClaudeDesktopAppConfigured().then(configured => ({ key: 'claudeDesktopApp', configured })).catch(err => ({ key: 'claudeDesktopApp', err })) : null,
+        ]);
+        checks.filter(Boolean).forEach(({ key, configured, err }) => {
+            if (err) {
+                console.warn(`Failed to check ${key} integration:`, err);
+                return;
+            }
+            applyIntegrationStatus(key, configured);
+        });
     } catch (err) {
-
-        dom.btnLaunchTerminal.disabled = false;
-
-        dom.btnLaunchTerminal.innerHTML = originalText;
-
-        dom.btnLaunchTerminal.style.background = '';
-
-        console.error('Launch terminal error:', err);
-
-        toast(t('toast_launch_failed') + ': ' + err.message, 'error');
-
+        console.error('Failed to check integrations status:', err);
+    } finally {
+        integrationStatusChecking = false;
     }
-
 }
 
+function applyIntegrationStatus(key, configured) {
+    const chip = document.getElementById(`chip-${key}`);
+    if (chip) {
+        chip.style.display = configured ? 'flex' : 'none';
+    }
 
+    if (key === 'cli') {
+        updateIntegrationBadge(dom.sysEnvBadge, configured);
+        setSyncState(dom.syncCliState, dom.syncCliDot, configured, 'CLI');
+        if (dom.btnSysEnvInstall) dom.btnSysEnvInstall.disabled = configured;
+        if (dom.btnSysEnvRemove) dom.btnSysEnvRemove.disabled = !configured;
+    } else if (key === 'vscode') {
+        updateIntegrationBadge(dom.vscodeBadge, configured);
+        setSyncState(dom.syncVscodeState, dom.syncVscodeDot, configured, 'VS Code');
+        if (dom.btnVscodeInstall) dom.btnVscodeInstall.disabled = configured;
+        if (dom.btnVscodeRemove) dom.btnVscodeRemove.disabled = !configured;
+    } else if (key === 'claude') {
+        updateIntegrationBadge(dom.claudeDesktopBadge, configured);
+        setSyncState(dom.syncClaudeState, dom.syncClaudeDot, configured, 'Claude');
+        if (dom.btnSetupDesktop) dom.btnSetupDesktop.disabled = configured;
+        if (dom.btnClearDesktop) dom.btnClearDesktop.disabled = !configured;
+    } else if (key === 'claudeDesktopApp') {
+        updateIntegrationBadge(dom.claudeDesktopAppBadge, configured);
+        if (dom.btnSetupClaudeDesktopApp) dom.btnSetupClaudeDesktopApp.disabled = configured;
+        if (dom.btnClearClaudeDesktopApp) dom.btnClearClaudeDesktopApp.disabled = !configured;
+    }
+}
+
+function refreshIntegrationsSoon() {
+    window.setTimeout(checkIntegrationsStatus, 350);
+}
+
+function setButtonBusy(btn, busy, labelKey) {
+    if (!btn) return;
+    if (busy) {
+        btn.dataset.idleText = btn.textContent;
+        btn.textContent = t(labelKey);
+        btn.disabled = true;
+        return;
+    }
+    if (btn.dataset.idleText) {
+        btn.textContent = btn.dataset.idleText;
+        delete btn.dataset.idleText;
+    }
+    btn.disabled = false;
+}
+
+function updateIntegrationBadge(el, active) {
+    if (!el) return;
+    el.textContent = active ? t('badge_active') : t('badge_inactive');
+    el.className = `integration-badge ${active ? 'active' : 'inactive'}`;
+}
+
+function renderCompactEnvCode() {
+    if (!dom.compactEnvCode) return;
+    let env = {};
+    try {
+        env = buildClaudeEnvForClient('claude-code-cli');
+    } catch (_) {
+        env = {
+            ANTHROPIC_BASE_URL: `http://${(systemStatus && systemStatus.listen) || '127.0.0.1:8787'}`,
+            ANTHROPIC_API_KEY: 'ocgt-local-proxy',
+        };
+    }
+    const entries = Object.entries(env).sort(([a], [b]) => a.localeCompare(b));
+    if (compactShell === 'powershell') {
+        dom.compactEnvCode.textContent = entries.map(([key, value]) => `$env:${key}=${shellQuotePowerShell(value)}`).join('\n');
+    } else if (compactShell === 'cmd') {
+        dom.compactEnvCode.textContent = entries.map(([key, value]) => `set "${key}=${String(value).replace(/"/g, '\\"')}"`).join('\n');
+    } else {
+        dom.compactEnvCode.textContent = entries.map(([key, value]) => `export ${key}=${shellQuoteBash(value)}`).join('\n');
+    }
+}
+
+// ── Actions ──
+
+async function handleLaunchTerminal() {
+    const app = getWailsApp();
+    if (!app || typeof app.LaunchClaudeTerminal !== 'function') {
+        toast(t('warn_desktop_only_launch'), 'info');
+        return;
+    }
+    const btn = dom.btnLaunchTerminal;
+    const idleText = btn ? btn.textContent : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = t('term_launching');
+    }
+    try {
+        const res = await app.LaunchClaudeTerminal(compactShell || 'powershell', currentLang || 'zh');
+        if (res === 'success') {
+            toastI18n('toast_launch_success', 'success');
+        } else {
+            toast(t('toast_launch_failed') + ': ' + res, 'error');
+        }
+    } catch (err) {
+        console.error('Launch terminal error:', err);
+        toast(t('toast_launch_failed') + ': ' + err.message, 'error');
+    } finally {
+        if (btn) {
+            window.setTimeout(() => {
+                btn.disabled = false;
+                btn.textContent = idleText || t('btn_launch_temp_term');
+            }, 500);
+        }
+    }
+}
+
+async function handleSysEnvInstall() {
+    const app = getWailsApp();
+    if (!app || typeof app.InstallClaudeUserEnv !== 'function') {
+        toast(t('warn_desktop_only_env'), 'info');
+        return;
+    }
+    let nextStatus = null;
+    setButtonBusy(dom.btnSysEnvInstall, true, 'status_configuring');
+    try {
+        const res = await app.InstallClaudeUserEnv();
+        if (res === 'success') {
+            toastI18n('toast_sys_installed', 'success');
+            nextStatus = true;
+            refreshIntegrationsSoon();
+        } else {
+            toast(t('toast_env_repair_failed') + ': ' + res, 'error');
+        }
+    } catch (err) {
+        console.error('SysEnvInstall error:', err);
+        toast(t('toast_env_repair_failed') + ': ' + err.message, 'error');
+    } finally {
+        setButtonBusy(dom.btnSysEnvInstall, false);
+        if (nextStatus !== null) applyIntegrationStatus('cli', nextStatus);
+    }
+}
+
+async function handleSysEnvRemove() {
+    const app = getWailsApp();
+    if (!app || typeof app.ClearSystemEnv !== 'function') {
+        toast(t('warn_desktop_only_env'), 'info');
+        return;
+    }
+    let nextStatus = null;
+    setButtonBusy(dom.btnSysEnvRemove, true, 'status_clearing');
+    try {
+        const res = await app.ClearSystemEnv();
+        if (res === 'success') {
+            toastI18n('toast_sys_removed', 'success');
+            nextStatus = false;
+            refreshIntegrationsSoon();
+        } else {
+            toast(t('toast_env_repair_failed') + ': ' + res, 'error');
+        }
+    } catch (err) {
+        console.error('SysEnvRemove error:', err);
+        toast(t('toast_env_repair_failed') + ': ' + err.message, 'error');
+    } finally {
+        setButtonBusy(dom.btnSysEnvRemove, false);
+        if (nextStatus !== null) applyIntegrationStatus('cli', nextStatus);
+    }
+}
+
+async function handleVscodeInstall() {
+    const app = getWailsApp();
+    if (!app || typeof app.InstallVSCodeEnv !== 'function') {
+        toast(t('warn_desktop_only_env'), 'info');
+        return;
+    }
+    let nextStatus = null;
+    setButtonBusy(dom.btnVscodeInstall, true, 'status_configuring');
+    try {
+        const res = await app.InstallVSCodeEnv();
+        if (res === 'success') {
+            toastI18n('toast_vscode_installed', 'success');
+            nextStatus = true;
+            refreshIntegrationsSoon();
+        } else {
+            toast(t('toast_vscode_failed') + ': ' + res, 'error');
+        }
+    } catch (err) {
+        console.error('VscodeInstall error:', err);
+        toast(t('toast_vscode_failed') + ': ' + err.message, 'error');
+    } finally {
+        setButtonBusy(dom.btnVscodeInstall, false);
+        if (nextStatus !== null) applyIntegrationStatus('vscode', nextStatus);
+    }
+}
+
+async function handleVscodeRemove() {
+    const app = getWailsApp();
+    if (!app || typeof app.RemoveVSCodeEnv !== 'function') {
+        toast(t('warn_desktop_only_env'), 'info');
+        return;
+    }
+    let nextStatus = null;
+    setButtonBusy(dom.btnVscodeRemove, true, 'status_clearing');
+    try {
+        const res = await app.RemoveVSCodeEnv();
+        if (res === 'success') {
+            toastI18n('toast_vscode_removed', 'success');
+            nextStatus = false;
+            refreshIntegrationsSoon();
+        } else {
+            toast(t('toast_vscode_failed') + ': ' + res, 'error');
+        }
+    } catch (err) {
+        console.error('VscodeRemove error:', err);
+        toast(t('toast_vscode_failed') + ': ' + err.message, 'error');
+    } finally {
+        setButtonBusy(dom.btnVscodeRemove, false);
+        if (nextStatus !== null) applyIntegrationStatus('vscode', nextStatus);
+    }
+}
 
 async function handleSetupDesktop() {
     const app = getWailsApp();
@@ -1473,46 +2796,23 @@ async function handleSetupDesktop() {
         return;
     }
 
-    dom.btnSetupDesktop.disabled = true;
-    const span = dom.btnSetupDesktopText;
-    if (span) span.textContent = t('status_configuring') || '配置中...';
-
+    let nextStatus = null;
+    setButtonBusy(dom.btnSetupDesktop, true, 'status_configuring');
     try {
         const res = await app.SetupClaudeDesktop();
         if (res === 'success') {
-            if (span) span.textContent = t('btn_setup_desktop_configured');
-            dom.btnSetupDesktop.style.background = 'var(--green)';
             toastI18n('toast_desktop_setup_success', 'success');
-            toastI18n('toast_desktop_verify_hint', 'info');
-            dom.btnSetupDesktop.disabled = false;
+            nextStatus = true;
+            refreshIntegrationsSoon();
         } else {
-            dom.btnSetupDesktop.disabled = false;
-            if (span) span.textContent = t('btn_setup_desktop');
             toastI18n('toast_desktop_setup_fail', 'error');
         }
     } catch (err) {
-        dom.btnSetupDesktop.disabled = false;
-        if (span) span.textContent = t('btn_setup_desktop');
         console.error('Setup desktop error:', err);
         toastI18n('toast_desktop_setup_fail', 'error');
-    }
-}
-
-async function checkDesktopConfigStatus() {
-    const app = getWailsApp();
-    if (!app || typeof app.IsClaudeDesktopConfigured !== 'function') return;
-    try {
-        const configured = await app.IsClaudeDesktopConfigured();
-        const span = dom.btnSetupDesktopText;
-        if (configured) {
-            if (span) span.textContent = t('btn_setup_desktop_configured');
-            dom.btnSetupDesktop.style.background = 'var(--green)';
-        } else {
-            if (span) span.textContent = t('btn_setup_desktop');
-            dom.btnSetupDesktop.style.background = '';
-        }
-    } catch (err) {
-        console.error('Check desktop config error:', err);
+    } finally {
+        setButtonBusy(dom.btnSetupDesktop, false);
+        if (nextStatus !== null) applyIntegrationStatus('claude', nextStatus);
     }
 }
 
@@ -1523,17 +2823,14 @@ async function handleClearDesktopConfig() {
         return;
     }
 
-    if (dom.btnClearDesktop) dom.btnClearDesktop.disabled = true;
-    const originalText = dom.btnClearDesktop ? dom.btnClearDesktop.textContent : '';
-    if (dom.btnClearDesktop) dom.btnClearDesktop.textContent = t('status_clearing') || '清除中...';
-
+    let nextStatus = null;
+    setButtonBusy(dom.btnClearDesktop, true, 'status_clearing');
     try {
         const res = await app.ClearClaudeDesktop();
         if (res === 'success') {
-            const span = dom.btnSetupDesktopText;
-            if (span) span.textContent = t('btn_setup_desktop');
-            dom.btnSetupDesktop.style.background = '';
             toastI18n('toast_desktop_cleared', 'success');
+            nextStatus = false;
+            refreshIntegrationsSoon();
         } else {
             toastI18n('toast_desktop_setup_fail', 'error');
         }
@@ -1541,62 +2838,60 @@ async function handleClearDesktopConfig() {
         console.error('Clear desktop config error:', err);
         toastI18n('toast_desktop_setup_fail', 'error');
     } finally {
-        if (dom.btnClearDesktop) {
-            dom.btnClearDesktop.disabled = false;
-            dom.btnClearDesktop.textContent = originalText;
-        }
+        setButtonBusy(dom.btnClearDesktop, false);
+        if (nextStatus !== null) applyIntegrationStatus('claude', nextStatus);
     }
 }
 
-// ── 12d: Environment repair ──
-function setupEnvRepairHandlers() {
-    if (dom.btnInstallEnv) {
-        dom.btnInstallEnv.addEventListener('click', () => installClaudeUserEnv(true));
-    }
-    if (dom.btnInstallEnvTerminal) {
-        dom.btnInstallEnvTerminal.addEventListener('click', () => installClaudeUserEnv(true));
-    }
-}
-
-async function installClaudeUserEnv(showAlert) {
+async function handleSetupClaudeDesktopApp() {
     const app = getWailsApp();
-    if (!app || typeof app.InstallClaudeUserEnv !== 'function') {
-        if (showAlert) toast(t('warn_desktop_only_env'), 'info');
-        return false;
+    if (!app || typeof app.SetupClaudeDesktopApp !== 'function') {
+        toast(t('warn_desktop_only_env'), 'info');
+        return;
     }
-    const buttons = [dom.btnInstallEnv, dom.btnInstallEnvTerminal].filter(Boolean);
-    buttons.forEach(btn => {
-        btn.disabled = true;
-        btn.dataset.originalText = btn.textContent;
-        btn.textContent = t('env_repairing');
-    });
+    let nextStatus = null;
+    setButtonBusy(dom.btnSetupClaudeDesktopApp, true, 'status_configuring');
     try {
-        const res = await app.InstallClaudeUserEnv();
+        const res = await app.SetupClaudeDesktopApp();
         if (res === 'success') {
-            buttons.forEach(btn => { btn.textContent = t('env_repaired_hint'); });
-            if (showAlert) toastI18n('toast_env_repaired', 'success');
-            setTimeout(() => {
-                buttons.forEach(btn => {
-                    btn.disabled = false;
-                    btn.textContent = btn.dataset.originalText || t('btn_repair_env');
-                });
-            }, 2200);
-            return true;
+            toastI18n('toast_claude_desktop_app_setup_success', 'success');
+            nextStatus = true;
+            refreshIntegrationsSoon();
+        } else {
+            toast(t('toast_desktop_setup_fail') + ': ' + res, 'error');
         }
-        if (showAlert) toast(t('toast_env_repair_failed') + ': ' + res, 'error');
-        return false;
     } catch (err) {
-        console.error('InstallClaudeUserEnv failed:', err);
-        if (showAlert) toast(t('toast_env_repair_failed') + ': ' + err.message, 'error');
-        return false;
+        console.error('Setup Claude Desktop App error:', err);
+        toast(t('toast_desktop_setup_fail') + ': ' + err.message, 'error');
     } finally {
-        const repairedText = t('env_repaired_hint');
-        if (!buttons.some(btn => btn.textContent === repairedText)) {
-            buttons.forEach(btn => {
-                btn.disabled = false;
-                btn.textContent = btn.dataset.originalText || t('btn_repair_env');
-            });
+        setButtonBusy(dom.btnSetupClaudeDesktopApp, false);
+        if (nextStatus !== null) applyIntegrationStatus('claudeDesktopApp', nextStatus);
+    }
+}
+
+async function handleClearClaudeDesktopApp() {
+    const app = getWailsApp();
+    if (!app || typeof app.ClearClaudeDesktopApp !== 'function') {
+        toast(t('warn_desktop_only_env'), 'info');
+        return;
+    }
+    let nextStatus = null;
+    setButtonBusy(dom.btnClearClaudeDesktopApp, true, 'status_clearing');
+    try {
+        const res = await app.ClearClaudeDesktopApp();
+        if (res === 'success') {
+            toastI18n('toast_claude_desktop_app_cleared', 'success');
+            nextStatus = false;
+            refreshIntegrationsSoon();
+        } else {
+            toast(t('toast_desktop_setup_fail') + ': ' + res, 'error');
         }
+    } catch (err) {
+        console.error('Clear Claude Desktop App error:', err);
+        toast(t('toast_desktop_setup_fail') + ': ' + err.message, 'error');
+    } finally {
+        setButtonBusy(dom.btnClearClaudeDesktopApp, false);
+        if (nextStatus !== null) applyIntegrationStatus('claudeDesktopApp', nextStatus);
     }
 }
 
@@ -1620,7 +2915,8 @@ function setupHistoryHandlers() {
 }
 
 // ── 12f: Theme & preferences center panel ──
-function applyTheme(theme) {
+function applyTheme(theme, options = {}) {
+    theme = normalizeTheme(theme);
     if (theme === 'system') {
         const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
         document.documentElement.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
@@ -1629,6 +2925,7 @@ function applyTheme(theme) {
     }
     localStorage.setItem('theme', theme);
     syncThemeButtons(theme);
+    if (options.persist !== false) persistUIPreferencesSoon();
 }
 
 function syncThemeButtons(theme) {
@@ -1638,14 +2935,27 @@ function syncThemeButtons(theme) {
 }
 
 function openSettingsPanel() {
+
     const overlay = document.getElementById('settingsPanelOverlay');
+
     if (overlay) {
+
         overlay.classList.add('active');
+
         overlay.setAttribute('aria-hidden', 'false');
+
         // Sync current state
+
         const currentTheme = localStorage.getItem('theme') || 'light';
+
         syncThemeButtons(currentTheme);
+
+        const currentHue = localStorage.getItem('accent-hue') || '174';
+
+        syncAccentDots(currentHue);
+
     }
+
 }
 
 function closeSettingsPanel() {
@@ -1689,47 +2999,89 @@ function setupThemeLangHandlers() {
         }
     });
 
-    // Language select inside settings panel
-    if (dom.prefLangSelect) {
-        dom.prefLangSelect.value = currentLang;
-        dom.prefLangSelect.addEventListener('change', (e) => {
-            currentLang = e.target.value;
-            localStorage.setItem('lang', currentLang);
-            updateLanguageDOM();
-            loadStatus();
+    // Accent color dots
+
+    document.querySelectorAll('.sp-accent-dot').forEach(dot => {
+
+        dot.addEventListener('click', () => {
+
+            const hue = Number(dot.dataset.accentHue);
+
+            applyAccentHue(hue);
+
+            const accentInput = document.getElementById('accentCustomInput');
+            if (accentInput) accentInput.value = '';
+
+        });
+
+    });
+
+    // Custom accent hue input
+    const accentInput = document.getElementById('accentCustomInput');
+    if (accentInput) {
+        const applyCustomAccent = () => {
+            let hue = parseInt(accentInput.value, 10);
+            if (isNaN(hue)) return;
+            hue = Math.max(0, Math.min(360, hue));
+            accentInput.value = String(hue);
+            applyAccentHue(hue);
+        };
+        accentInput.addEventListener('change', applyCustomAccent);
+        accentInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                applyCustomAccent();
+            }
         });
     }
+
+    // Sync current accent dot state on panel open
+
+    const origOpen = openSettingsPanel;
+
+    // (accent dot sync happens in openSettingsPanel via syncAccentDots)
+
+
+
+    // Language select inside settings panel
+
+    if (dom.prefLangSelect) {
+
+        dom.prefLangSelect.value = currentLang;
+
+        dom.prefLangSelect.addEventListener('change', (e) => {
+
+            currentLang = e.target.value;
+
+            localStorage.setItem('lang', currentLang);
+
+            updateLanguageDOM();
+
+            loadStatus();
+            persistUIPreferencesSoon();
+
+        });
+
+    }
+
+}
+
+
+
+// Re-populate model selects when language changes (labels stay same but i18n updates)
+
+function refreshModelSelects() {
+
+    populateModelSelects();
+
 }
 
 // ── 12g: Dashboard actions ──
-function setupDashboardHandlers() {
-    const btnOpenConfig = document.getElementById('open-config-btn');
-    if (btnOpenConfig) {
-        btnOpenConfig.addEventListener('click', async () => {
-            const app = getWailsApp();
-            if (!app || typeof app.OpenConfigLocation !== 'function') {
-                toast(t('warn_desktop_only_folder'), 'info');
-                return;
-            }
-            try {
-                const res = await app.OpenConfigLocation();
-                if (res !== 'success') toast(t('err_open_folder') + ': ' + res, 'error');
-            } catch (e) {
-                console.error('OpenConfigLocation error:', e);
-                toast(t('err_open_folder_generic') + ': ' + e.message, 'error');
-            }
-        });
-    }
 
-    if (dom.btnGotoDesktopConfig) {
-        dom.btnGotoDesktopConfig.addEventListener('click', () => {
-            const terminalNav = document.getElementById('btn-nav-terminal');
-            if (terminalNav) terminalNav.click();
-            setTimeout(() => {
-                handleSetupDesktop();
-            }, 300);
-        });
-    }
+function setupDashboardHandlers() {
+
+    // Dashboard is informational only; client activation lives on the Quick Connect page.
+
 }
 
 // ── 12h: Modals ──
@@ -1765,26 +3117,84 @@ function setupModalHandlers() {
 
 // ── 12i: Wails runtime events ──
 function setupWailsEvents() {
+
     if (!(window.runtime && typeof window.runtime.EventsOn === 'function')) return;
+
     window.runtime.EventsOn('nav-to-settings', () => {
+
         const settingsNavBtn = document.getElementById('btn-nav-settings');
+
         if (settingsNavBtn) settingsNavBtn.click();
+
     });
+
     window.runtime.EventsOn('show-close-dialog', () => showModal(dom.closeDialogOverlay));
+
     window.runtime.EventsOn('show-about-dialog', () => showModal(dom.aboutDialogOverlay));
+
+    // Proxy lifecycle events from Go backend
+
+    window.runtime.EventsOn('proxy-restarted', (addr) => {
+
+        API_BASE = `http://${addr}`;
+
+        proxyReady = false;
+
+        _consecutiveFailures = 0;
+
+        initializeApp();
+
+    });
+
+    window.runtime.EventsOn('proxy-error', (errMsg) => {
+
+        console.error('[ocgt] proxy error:', errMsg);
+
+        proxyReady = false;
+
+        setProxyConnectionState('offline', errMsg);
+
+    });
+
 }
 
 /** Master event handler setup — delegates to focused sub-functions */
+
 function setupEventHandlers() {
+
     setupNavigation();
+
     setupSettingsHandlers();
+
     setupTerminalHandlers();
+
     setupEnvRepairHandlers();
+
     setupHistoryHandlers();
+
     setupThemeLangHandlers();
+
     setupDashboardHandlers();
+
     setupModalHandlers();
+
     setupWailsEvents();
+
+    // Retry connection button
+    if (dom.loadingRetryBtn) {
+        dom.loadingRetryBtn.addEventListener('click', () => {
+            dom.loadingRetryBtn.classList.add('hidden');
+            initializeApp();
+        });
+    }
+}
+
+
+
+function setupEnvRepairHandlers() {
+
+    // Env repair UI is handled through integration buttons
+
 }
 // ══════════════════════════════════════════════════════
 
@@ -1807,21 +3217,39 @@ function setupEventHandlers() {
 // ══════════════════════════════════════════════════════
 
 document.addEventListener('DOMContentLoaded', () => {
+
     cacheDom();
 
+    initAccentColor();
+
+    populateModelSelects();
+
+
+
     // Stamp version from single source of truth
+
     if (dom.appVersion) dom.appVersion.textContent = APP_VERSION;
+
     if (dom.aboutVersion) dom.aboutVersion.textContent = APP_VERSION;
+
     if (dom.footerText) dom.footerText.textContent = t('footer_text');
 
+
+
     setupEventHandlers();
+
     updateLanguageDOM();
-    loadPreferences();
+
     initializeApp();
 
     // Polling: refresh history when online, otherwise try to reconnect
-    setInterval(async () => {
+    const pollInterval = setInterval(async () => {
         if (proxyReady) { await loadHistory(); }
         else { await initializeApp(); }
-    }, 2500);
+    }, 5000);
+
+    // Clean up interval on page unload
+    window.addEventListener('beforeunload', () => {
+        clearInterval(pollInterval);
+    });
 });

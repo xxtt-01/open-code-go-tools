@@ -17,6 +17,15 @@ func anthropicToOpenAI(in anthropicRequest) openAIRequest {
 		TopP:        in.TopP,
 		Stop:        in.StopSequences,
 	}
+	
+	// Clamp MaxTokens to prevent "Range of max_tokens should be [1, 65536]" errors
+	// (common with Qwen and other non-OpenAI standard providers)
+	if out.MaxTokens <= 0 {
+		out.MaxTokens = 8192 // safe default if omitted
+	} else if out.MaxTokens > 65536 {
+		out.MaxTokens = 65536
+	}
+
 	if system := blocksToText(in.System); system != "" {
 		out.Messages = append(out.Messages, openAIMessage{Role: "system", Content: system})
 	}
@@ -149,7 +158,7 @@ func openAIImageURLPart(url string) map[string]any {
 	}
 }
 
-func openAIToAnthropic(in openAIResponse, model string) map[string]any {
+func openAIToAnthropic(in openAIResponse, model string, fallbackInputTokens int) map[string]any {
 	content := []map[string]any{}
 	stopReason := "end_turn"
 	if len(in.Choices) > 0 {
@@ -172,8 +181,26 @@ func openAIToAnthropic(in openAIResponse, model string) map[string]any {
 				"input": parseJSONObj(call.Function.Arguments),
 			})
 		}
-		stopReason = finishReason(choice.FinishReason, len(choice.Message.ToolCalls) > 0)
+		reason := ""
+		if choice.FinishReason != nil {
+			reason = *choice.FinishReason
+		}
+		stopReason = finishReason(reason, len(choice.Message.ToolCalls) > 0)
 	}
+	// Build usage object with defensive defaults for OpenAI-to-Anthropic conversion
+	// OpenAI protocol lacks Anthropic-specific cache fields (cache_creation_input_tokens,
+	// cache_read_input_tokens). These remain 0 for non-Anthropic upstreams (kimi/deepseek/etc).
+	// This is an architectural limitation, not a bug.
+	usageInfo := usageFromOpenAI(in.Usage, fallbackInputTokens)
+	usage := map[string]int{
+		"input_tokens":  usageInfo.InputTokens,
+		"output_tokens": usageInfo.OutputTokens,
+	}
+	// Note: cache_creation_input_tokens and cache_read_input_tokens intentionally omitted
+	// (default to 0) because OpenAI Chat Completions API does not provide prompt caching metrics.
+	// Anthropic Claude models accessed via OpenAI-compatible endpoints may provide partial data,
+	// but most third-party models (kimi, deepseek, qwen, etc.) do not support prompt caching.
+
 	return map[string]any{
 		"id":            firstNonEmpty(in.ID, "msg_ocgt_"+strconv.FormatInt(time.Now().UnixNano(), 36)),
 		"type":          "message",
@@ -182,10 +209,22 @@ func openAIToAnthropic(in openAIResponse, model string) map[string]any {
 		"content":       content,
 		"stop_reason":   stopReason,
 		"stop_sequence": nil,
-		"usage": map[string]int{
-			"input_tokens":  in.Usage.PromptTokens,
-			"output_tokens": in.Usage.CompletionTokens,
-		},
+		"usage":         usage,
+	}
+}
+
+func usageFromOpenAI(in openAIUsage, fallbackInputTokens int) tokenUsage {
+	inputTokens := in.PromptTokens
+	if inputTokens <= 0 {
+		inputTokens = fallbackInputTokens
+	}
+	outputTokens := in.CompletionTokens
+	if outputTokens <= 0 && in.TotalTokens > inputTokens {
+		outputTokens = in.TotalTokens - inputTokens
+	}
+	return tokenUsage{
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
 	}
 }
 
@@ -309,6 +348,17 @@ func reasoningText(values ...any) string {
 	return ""
 }
 
+// reasoningTextRaw is like reasoningText but preserves leading/trailing spaces.
+// Use for streaming chunks to avoid losing word boundaries when content is split across SSE events.
+func reasoningTextRaw(values ...any) string {
+	for _, value := range values {
+		if text := reasoningTextValueRaw(value); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
 func reasoningTextValue(value any) string {
 	switch v := value.(type) {
 	case nil:
@@ -328,6 +378,37 @@ func reasoningTextValue(value any) string {
 		parts := make([]string, 0, len(keys))
 		for _, key := range keys {
 			if text := reasoningTextValue(v[key]); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, "\n")
+		}
+	}
+	return ""
+}
+
+// reasoningTextValueRaw is like reasoningTextValue but preserves leading/trailing spaces.
+// Use for streaming chunks to avoid losing word boundaries when content is split across SSE events.
+func reasoningTextValueRaw(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return v // No TrimSpace - preserve original spacing
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			if text := reasoningTextValueRaw(item); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, "\n")
+	case map[string]any:
+		keys := []string{"reasoning_content", "thinking_content", "thinking", "reasoning", "content", "text", "summary"}
+		parts := make([]string, 0, len(keys))
+		for _, key := range keys {
+			if text := reasoningTextValueRaw(v[key]); text != "" {
 				parts = append(parts, text)
 			}
 		}
@@ -475,13 +556,10 @@ func supportsReasoningContentReplay(model string) bool {
 func isDeepSeekModel(model string) bool {
 	lower := strings.ToLower(model)
 	return modelPrefixMatch(lower, []string{
-		"deepseek-v4",
-		"deepseek-r1",
-		"deepseek-reasoner",
+		"deepseek",
 		"ds-r1",
 	}) || strings.HasSuffix(lower, "/r1") ||
-		strings.HasSuffix(lower, "-r1") ||
-		strings.Contains(lower, "reasoning")
+		strings.HasSuffix(lower, "-r1")
 }
 
 // supportsVisionInput returns true if the model is known to support image/multimodal inputs.
@@ -498,9 +576,11 @@ func supportsVisionInput(model string) bool {
 		strings.HasPrefix(lower, "gemini") ||
 		strings.HasPrefix(lower, "gpt") ||
 		strings.HasPrefix(lower, "grok") ||
+		strings.HasPrefix(lower, "o1") ||
+		strings.HasPrefix(lower, "o3") ||
+		strings.HasPrefix(lower, "o4") ||
 		strings.Contains(lower, "vision") ||
-		strings.Contains(lower, "vl") ||
-		strings.Contains(lower, "pro") // conservative: many "pro" models have vision
+		strings.Contains(lower, "vl")
 }
 
 // sanitizeContentBlocksForNonVision replaces image blocks with text placeholders
@@ -588,3 +668,18 @@ func modelPrefixMatch(lowerModel string, prefixes []string) bool {
 	}
 	return false
 }
+
+// NOTE: Usage Statistics Limitation
+//
+// The openAIToAnthropic converter provides basic usage metrics (input_tokens, output_tokens)
+// but cannot populate Anthropic-specific cache fields:
+//   - cache_creation_input_tokens: always 0 (OpenAI protocol does not support)
+//   - cache_read_input_tokens: always 0 (OpenAI protocol does not support)
+//
+// This affects downstream tools that calculate usage percentages based on:
+//   used_percentage = (input + cache_creation + cache_read) / window_size
+//
+// For accurate cache statistics, use Anthropic native API endpoints or models that
+// support prompt caching and return Anthropic-formatted responses.
+//
+// Related: internal/config/config.go Profile documentation

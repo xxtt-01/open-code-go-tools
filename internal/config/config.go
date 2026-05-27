@@ -34,16 +34,25 @@ type Config struct {
 	MaxConcurrentRequests   int                `json:"max_concurrent_requests,omitempty"` // Optional concurrent request limit
 	RateLimitPerSecond      int                `json:"rate_limit_per_second,omitempty"`   // Rate limit: requests per second per IP
 	RateLimitBurst          int                `json:"rate_limit_burst,omitempty"`        // Rate limit: max burst size per IP
+	ClaudeEnv               map[string]string  `json:"claude_env,omitempty"`              // User-editable Claude Code env template
 }
 
+// Profile holds configuration for a specific API backend.
+// Multiple profiles allow switching between different providers/keys.
+//
+// Known Limitation: When using OpenAI-compatible endpoints (non-Anthropic upstream),
+// usage statistics will lack cache-related fields (cache_creation_input_tokens,
+// cache_read_input_tokens) because the OpenAI Chat Completions protocol does not
+// support Anthropic's prompt caching metrics. This affects used_percentage
+// calculations in downstream tools like Claude Code's status line.
 type Profile struct {
-	APIKeyEnv     string            `json:"api_key_env"`
-	APIKey        string            `json:"api_key,omitempty"`
+	APIKeyEnv     string            `json:"api_key_env"`       // Environment variable name for API key
+	APIKey        string            `json:"api_key,omitempty"` // Direct API key (takes precedence over APIKeyEnv)
 	DefaultModel  string            `json:"default_model,omitempty"`
-	ModelAliases  map[string]string `json:"model_aliases,omitempty"`
-	MessageModels []string          `json:"message_models,omitempty"`
-	FallbackChain []string          `json:"fallback_chain,omitempty"`
-	Headers       map[string]string `json:"headers,omitempty"`
+	ModelAliases  map[string]string `json:"model_aliases,omitempty"`  // Model name mappings (e.g., "sonnet" -> "deepseek-v4-pro")
+	MessageModels []string          `json:"message_models,omitempty"` // Models using Anthropic native endpoint (bypass OpenAI conversion)
+	FallbackChain []string          `json:"fallback_chain,omitempty"` // Automatic fallback models on failure
+	Headers       map[string]string `json:"headers,omitempty"`        // Custom headers for upstream requests
 }
 
 func DefaultPath() (string, error) {
@@ -58,39 +67,65 @@ func DefaultPath() (string, error) {
 }
 
 func Example() Config {
+	defaultProfile := Profile{
+		APIKeyEnv:    "OPENCODE_GO_API_KEY",
+		DefaultModel: "kimi-k2.6",
+		ModelAliases: map[string]string{
+			"deepseek": "deepseek-v4-pro",
+			"flash":    "deepseek-v4-flash",
+			"glm":      "glm-5.1",
+			"glm5":     "glm-5",
+			"hy3":      "hy3-preview",
+			"kimi":     "kimi-k2.6",
+			"kimi25":   "kimi-k2.5",
+			"mimo":     "mimo-v2.5-pro",
+			"mimo25":   "mimo-v2.5",
+			"minimax":  "minimax-m2.7",
+			"opus":     "kimi-k2.6",
+			"qwen":     "qwen3.6-plus",
+			"qwen35":   "qwen3.5-plus",
+			"sonnet":   "deepseek-v4-pro",
+			"haiku":    "deepseek-v4-flash",
+		},
+		MessageModels: []string{"minimax-m2.5", "minimax-m2.7"},
+		FallbackChain: []string{"kimi-k2.6", "qwen3.6-plus", "deepseek-v4-flash"},
+	}
 	return Config{
 		Version:                 CurrentConfigVersion,
 		Listen:                  DefaultListen,
 		Upstream:                DefaultUpstream,
 		RequestTimeoutSeconds:   DefaultRequestTimeoutSeconds,
 		MaxThinkingBudgetTokens: DefaultMaxThinkingBudgetTokens,
+		RateLimitPerSecond:      DefaultRateLimitPerSecond,
+		RateLimitBurst:          DefaultRateLimitBurst,
+		ClaudeEnv:               DefaultClaudeEnv(defaultProfile),
 		ActiveProfile:           "opencode-go",
 		Profiles: map[string]Profile{
-			"opencode-go": {
-				APIKeyEnv:    "OPENCODE_GO_API_KEY",
-				DefaultModel: "kimi-k2.6",
-				ModelAliases: map[string]string{
-					"deepseek": "deepseek-v4-pro",
-					"flash":    "deepseek-v4-flash",
-					"glm":      "glm-5.1",
-					"glm5":     "glm-5",
-					"hy3":      "hy3-preview",
-					"kimi":     "kimi-k2.6",
-					"kimi25":   "kimi-k2.5",
-					"mimo":     "mimo-v2.5-pro",
-					"mimo25":   "mimo-v2.5",
-					"minimax":  "minimax-m2.7",
-					"opus":     "kimi-k2.6",
-					"qwen":     "qwen3.6-plus",
-					"qwen35":   "qwen3.5-plus",
-					"sonnet":   "deepseek-v4-pro",
-					"haiku":    "deepseek-v4-flash",
-				},
-				MessageModels: []string{"minimax-m2.5", "minimax-m2.7"},
-				FallbackChain: []string{"kimi-k2.6", "qwen3.6-plus", "deepseek-v4-flash"},
-			},
+			"opencode-go": defaultProfile,
 		},
 	}
+}
+
+func DefaultClaudeEnv(profile Profile) map[string]string {
+	env := map[string]string{
+		"API_TIMEOUT_MS": "600000",
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+		"DISABLE_NON_ESSENTIAL_MODEL_CALLS":        "1",
+		"CLAUDE_CODE_ATTRIBUTION_HEADER":           "0",
+		"CLAUDE_CODE_MAX_OUTPUT_TOKENS":            "131072",
+		"ENABLE_TOOL_SEARCH":                       "true",
+		"MAX_MCP_OUTPUT_TOKENS":                    "200000",
+		"MCP_TIMEOUT":                              "600000",
+		"MCP_TOOL_TIMEOUT":                         "600000",
+	}
+	if profile.DefaultModel != "" {
+		env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = profile.ResolveModel("opus")
+		env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = profile.ResolveModel("sonnet")
+		env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = profile.ResolveModel("haiku")
+		env["ANTHROPIC_SMALL_FAST_MODEL"] = profile.ResolveModel("haiku")
+		env["CLAUDE_CODE_SUBAGENT_MODEL"] = profile.ResolveModel("haiku")
+	}
+	return env
 }
 
 func Load(path string) (Config, error) {
@@ -139,7 +174,7 @@ func WriteExample(path string, overwrite bool) (string, error) {
 	if err != nil {
 		return path, err
 	}
-	return path, os.WriteFile(path, append(data, '\n'), 0o600)
+	return path, atomicWriteFile(path, append(data, '\n'), 0o600)
 }
 
 func (c Config) Save(path string) error {
@@ -154,11 +189,34 @@ func (c Config) Save(path string) error {
 		return err
 	}
 	c.Version = CurrentConfigVersion
-	data, err := json.MarshalIndent(c, "", "  ")
+
+	// Read existing file first to preserve unknown fields
+	existing := make(map[string]any)
+	if existingData, err := os.ReadFile(path); err == nil {
+		existingData = bytes.TrimPrefix(existingData, []byte{0xEF, 0xBB, 0xBF})
+		_ = json.Unmarshal(existingData, &existing)
+	}
+
+	// Marshal the config struct to get known fields
+	knownData, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o600)
+	var known map[string]any
+	if err := json.Unmarshal(knownData, &known); err != nil {
+		return err
+	}
+
+	// Merge: known fields overwrite existing, unknown fields preserved
+	for k, v := range known {
+		existing[k] = v
+	}
+
+	data, err := json.MarshalIndent(existing, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWriteFile(path, append(data, '\n'), 0o600)
 }
 
 func (c *Config) Migrate() {
@@ -211,6 +269,12 @@ func (c Config) Validate() error {
 	}
 	if c.MaxThinkingBudgetTokens < -1 || c.MaxThinkingBudgetTokens > 8192 {
 		return fmt.Errorf("max_thinking_budget_tokens must be -1, 0, or between 1 and 8192, got %d", c.MaxThinkingBudgetTokens)
+	}
+	if c.RateLimitPerSecond < 1 || c.RateLimitPerSecond > 10000 {
+		return fmt.Errorf("rate_limit_per_second must be between 1 and 10000, got %d", c.RateLimitPerSecond)
+	}
+	if c.RateLimitBurst < 1 || c.RateLimitBurst > 100000 {
+		return fmt.Errorf("rate_limit_burst must be between 1 and 100000, got %d", c.RateLimitBurst)
 	}
 	if len(c.Profiles) == 0 {
 		return errors.New("at least one profile is required")
@@ -272,7 +336,7 @@ func (c Config) Profile(name string) (Profile, string, error) {
 }
 
 func (p Profile) APIKeyValue() string {
-	if p.APIKey != "" && !isMaskedAPIKey(p.APIKey) {
+	if p.APIKey != "" && !IsMaskedAPIKey(p.APIKey) {
 		return p.APIKey
 	}
 	if p.APIKeyEnv != "" {
@@ -281,7 +345,9 @@ func (p Profile) APIKeyValue() string {
 	return ""
 }
 
-func isMaskedAPIKey(key string) bool {
+// IsMaskedAPIKey returns true if the key appears to be a masked/placeholder value
+// (e.g., "****" or contains "..."), indicating the user didn't change it.
+func IsMaskedAPIKey(key string) bool {
 	return key == "****" || strings.Contains(key, "...")
 }
 

@@ -17,14 +17,22 @@ import (
 	"time"
 
 	"github.com/ethan-blue/open-code-go-tools/internal/config"
+	"github.com/ethan-blue/open-code-go-tools/internal/version"
 )
 
 // LocalToken returns the active auth token, whether configured or auto-generated.
 // Used by the Wails frontend to authenticate API requests.
 func (s *Server) LocalToken() string {
-	if s.config.LocalAuthToken != "" {
-		return s.config.LocalAuthToken
+	s.configMu.RLock()
+	token := s.config.LocalAuthToken
+	s.configMu.RUnlock()
+	if token != "" {
+		return token
 	}
+	// autoAuthToken is written under autoAuthOnce which provides happens-before
+	// for the write, but reads still need synchronization. Use configMu for safety.
+	s.configMu.RLock()
+	defer s.configMu.RUnlock()
 	return s.autoAuthToken
 }
 
@@ -35,6 +43,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/models", s.models)
 	mux.HandleFunc("/v1/messages/count_tokens", s.countTokens)
 	mux.HandleFunc("/v1/messages", s.messages)
+	mux.HandleFunc("/claude-desktop/v1/models", s.models)
+	mux.HandleFunc("/claude-desktop/v1/messages/count_tokens", s.countTokens)
+	mux.HandleFunc("/claude-desktop/v1/messages", s.messages)
 
 	// Web Dashboard API
 	mux.HandleFunc("/ocgt/api/status", s.apiStatus)
@@ -42,6 +53,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/ocgt/api/profiles/active", s.apiSetActiveProfile)
 	mux.HandleFunc("/ocgt/api/key", s.apiSetKey)
 	mux.HandleFunc("/ocgt/api/history", s.apiHistory)
+	mux.HandleFunc("/ocgt/api/version", s.apiVersion)
 
 	mux.HandleFunc("/", s.serveStatic)
 
@@ -57,9 +69,10 @@ func (s *Server) Handler() http.Handler {
 		handler = authMiddleware(token, handler)
 	}
 	// Apply rate limiting using config values (defaults: 100 req/s, burst 200)
-	ratePerSec, rateBurst := s.config.RateLimit()
-	rl := newRateLimiter(ratePerSec, rateBurst)
-	handler = rateLimitMiddleware(rl, handler)
+	if s.rateLimiter == nil {
+		s.rateLimiter = newRateLimiter(s.config.RateLimit())
+	}
+	handler = rateLimitMiddleware(s.rateLimiter, handler)
 
 	return handler
 }
@@ -89,8 +102,16 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 
 	go func() {
 		<-ctx.Done()
-		log.Println("shutting down, waiting for in-flight streaming requests...")
+		log.Println("shutting down, stopping new connections...")
 
+		// First, stop accepting new connections.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		log.Println("calling server.Shutdown...")
+		_ = server.Shutdown(shutdownCtx)
+
+		// Then, drain in-flight streaming requests.
+		log.Println("waiting for in-flight streaming requests...")
 		done := make(chan struct{})
 		go func() {
 			s.wg.Wait()
@@ -102,11 +123,6 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		case <-time.After(30 * time.Second):
 			log.Println("timed out waiting for in-flight streaming requests")
 		}
-
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		log.Println("calling server.Shutdown...")
-		_ = server.Shutdown(shutdownCtx)
 	}()
 	log.Printf("ocgt OpenCode Go proxy listening on http://%s -> %s", s.config.Listen, s.config.Upstream)
 	err := server.ListenAndServe()
@@ -117,6 +133,10 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	return err
 }
 
+// watchConfig polls the config file for changes every 3 seconds.
+// TODO: Consider using fsnotify for event-driven watching instead of polling.
+// This would reduce latency and CPU usage, but would add a dependency.
+// Current implementation works correctly and is simpler to maintain.
 func (s *Server) watchConfig(ctx context.Context) {
 	if s.configPath == "" {
 		return
@@ -145,9 +165,7 @@ func (s *Server) watchConfig(ctx context.Context) {
 				if err != nil {
 					log.Printf("ocgt: config reload error: %v", err)
 				} else {
-					s.configMu.Lock()
-					s.config = cfg
-					s.configMu.Unlock()
+					s.ApplyConfig(cfg)
 					log.Printf("ocgt: config hot-reloaded from %s", s.configPath)
 				}
 			}
@@ -165,7 +183,10 @@ func (s *Server) profile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"active_profile": name, "upstream": s.config.Upstream})
+	s.configMu.RLock()
+	upstream := s.config.Upstream
+	s.configMu.RUnlock()
+	writeJSON(w, http.StatusOK, map[string]string{"active_profile": name, "upstream": upstream})
 }
 
 func (s *Server) models(w http.ResponseWriter, r *http.Request) {
@@ -174,12 +195,16 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if isClaudeDesktopRoute(r) {
+		writeJSON(w, http.StatusOK, configuredModels(profile))
+		return
+	}
 	req, err := s.newUpstreamRequest(r.Context(), http.MethodGet, "/v1/models", nil, profile)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	resp, err := s.client.Do(req)
+	resp, err := s.clientSnapshot().Do(req)
 	if err != nil {
 		writeProxyError(w, err)
 		return
@@ -198,9 +223,13 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) countTokens(w http.ResponseWriter, r *http.Request) {
-	data, err := io.ReadAll(io.LimitReader(r.Body, MaxBodySize))
+	data, err := io.ReadAll(io.LimitReader(r.Body, MaxBodySize+1))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if int64(len(data)) > MaxBodySize {
+		writeError(w, http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large (max %d bytes)", MaxBodySize))
 		return
 	}
 	var payload anthropicRequest
@@ -218,6 +247,10 @@ func (s *Server) countTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload.Model = profile.ResolveModel(payload.Model)
+	if isClaudeDesktopRoute(r) {
+		writeJSON(w, http.StatusOK, map[string]int{"input_tokens": estimateTokens(payload)})
+		return
+	}
 	if profile.UsesMessagesEndpoint(payload.Model) {
 		var raw map[string]any
 		if err := json.Unmarshal(data, &raw); err != nil {
@@ -237,7 +270,7 @@ func (s *Server) countTokens(w http.ResponseWriter, r *http.Request) {
 		}
 		req.Header.Set("Content-Type", "application/json")
 		applyAnthropicAuth(req, profile)
-		resp, err := s.client.Do(req)
+		resp, err := s.clientSnapshot().Do(req)
 		if err != nil {
 			writeJSON(w, http.StatusOK, map[string]int{"input_tokens": estimateTokens(payload)})
 			return
@@ -266,9 +299,13 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	data, err := io.ReadAll(io.LimitReader(r.Body, MaxBodySize))
+	data, err := io.ReadAll(io.LimitReader(r.Body, MaxBodySize+1))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if int64(len(data)) > MaxBodySize {
+		writeError(w, http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large (max %d bytes)", MaxBodySize))
 		return
 	}
 	var payload anthropicRequest
@@ -323,6 +360,7 @@ func (s *Server) forwardAnthropicMessages(w http.ResponseWriter, r *http.Request
 	s.wg.Add(1)
 	defer s.wg.Done()
 
+	client := clientSourceFromRequest(r)
 	candidates := s.buildCandidateModels(payload.Model, profile)
 
 	var lastErr error
@@ -390,7 +428,7 @@ func (s *Server) forwardAnthropicMessages(w http.ResponseWriter, r *http.Request
 		}
 
 		start := time.Now()
-		resp, err := s.client.Do(req)
+		resp, err := s.clientSnapshot().Do(req)
 		duration := time.Since(start)
 
 		if err != nil {
@@ -398,15 +436,16 @@ func (s *Server) forwardAnthropicMessages(w http.ResponseWriter, r *http.Request
 			lastErr = err
 			lastStatus = proxyErrorStatus(err)
 			log.Printf("[Fallback] Request to model %q failed: %v. Remaining candidates: %d", candidate, err, len(candidates)-idx-1)
-			s.addHistoryEntryWithError(r.Method, r.URL.Path, lastStatus, duration, candidate, "messages", err.Error())
+			s.addHistoryEntryWithUsageAndError(r.Method, r.URL.Path, lastStatus, duration, candidate, "messages", tokenUsage{Client: client}, err.Error())
 			continue
 		}
+		// Ensure response body is always closed
+		defer resp.Body.Close()
 
 		log.Printf("upstream route=messages model=%s status=%d", candidate, resp.StatusCode)
 
 		if resp.StatusCode >= 400 {
 			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, MaxBodySize))
-			resp.Body.Close()
 			errText := upstreamErrorSummary(resp.StatusCode, respBody)
 
 			// Record failure in Circuit Breaker
@@ -415,7 +454,7 @@ func (s *Server) forwardAnthropicMessages(w http.ResponseWriter, r *http.Request
 			// If it's a client error (4xx) other than rate limit (429), do not fallback, return immediately.
 			if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
 				writeUpstreamError(w, resp.StatusCode, respBody)
-				s.addHistoryEntryWithError(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "messages", errText)
+				s.addHistoryEntryWithUsageAndError(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "messages", tokenUsage{Client: client}, errText)
 				return
 			}
 
@@ -423,7 +462,7 @@ func (s *Server) forwardAnthropicMessages(w http.ResponseWriter, r *http.Request
 			lastErr = fmt.Errorf("upstream model %s returned status %d: %s", candidate, resp.StatusCode, errText)
 			lastStatus = resp.StatusCode
 			lastBody = respBody
-			s.addHistoryEntryWithError(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "messages", errText)
+			s.addHistoryEntryWithUsageAndError(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "messages", tokenUsage{Client: client}, errText)
 			continue
 		}
 
@@ -433,8 +472,7 @@ func (s *Server) forwardAnthropicMessages(w http.ResponseWriter, r *http.Request
 		stripHopByHopHeaders(w.Header())
 		w.WriteHeader(resp.StatusCode)
 		_, _ = copyResponse(w, resp.Body)
-		resp.Body.Close()
-		s.addHistoryEntry(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "messages")
+		s.addHistoryEntryWithUsage(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "messages", tokenUsage{Client: client})
 		return
 	}
 
@@ -456,6 +494,7 @@ func (s *Server) forwardChatCompletions(w http.ResponseWriter, r *http.Request, 
 	s.wg.Add(1)
 	defer s.wg.Done()
 
+	client := clientSourceFromRequest(r)
 	candidates := s.buildCandidateModels(payload.Model, profile)
 
 	var lastErr error
@@ -497,7 +536,7 @@ func (s *Server) forwardChatCompletions(w http.ResponseWriter, r *http.Request, 
 		}
 
 		start := time.Now()
-		resp, err := s.client.Do(req)
+		resp, err := s.clientSnapshot().Do(req)
 		duration := time.Since(start)
 
 		if err != nil {
@@ -505,15 +544,16 @@ func (s *Server) forwardChatCompletions(w http.ResponseWriter, r *http.Request, 
 			lastErr = err
 			lastStatus = proxyErrorStatus(err)
 			log.Printf("[Fallback] Request to model %q failed: %v. Remaining candidates: %d", candidate, err, len(candidates)-idx-1)
-			s.addHistoryEntryWithError(r.Method, r.URL.Path, lastStatus, duration, candidate, "chat/completions", err.Error())
+			s.addHistoryEntryWithUsageAndError(r.Method, r.URL.Path, lastStatus, duration, candidate, "chat/completions", tokenUsage{Client: client}, err.Error())
 			continue
 		}
+		// Ensure response body is always closed
+		defer resp.Body.Close()
 
 		log.Printf("upstream route=chat/completions model=%s status=%d", candidate, resp.StatusCode)
 
 		if resp.StatusCode >= 400 {
 			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, MaxBodySize))
-			resp.Body.Close()
 			errText := upstreamErrorSummary(resp.StatusCode, respBody)
 
 			// Record failure in Circuit Breaker
@@ -522,7 +562,7 @@ func (s *Server) forwardChatCompletions(w http.ResponseWriter, r *http.Request, 
 			// If it's a client error (4xx) other than rate limit (429), do not fallback, return immediately.
 			if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
 				writeUpstreamError(w, resp.StatusCode, respBody)
-				s.addHistoryEntryWithError(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "chat/completions", errText)
+				s.addHistoryEntryWithUsageAndError(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "chat/completions", tokenUsage{Client: client}, errText)
 				return
 			}
 
@@ -530,31 +570,34 @@ func (s *Server) forwardChatCompletions(w http.ResponseWriter, r *http.Request, 
 			lastErr = fmt.Errorf("upstream model %s returned status %d: %s", candidate, resp.StatusCode, errText)
 			lastStatus = resp.StatusCode
 			lastBody = respBody
-			s.addHistoryEntryWithError(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "chat/completions", errText)
+			s.addHistoryEntryWithUsageAndError(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "chat/completions", tokenUsage{Client: client}, errText)
 			continue
 		}
 
 		// Success!
 		s.recordModelSuccess(candidate)
 		if payload.Stream {
-			streamOpenAIAsAnthropic(w, resp.Body, candidate, s.setReasoningLocked)
-			resp.Body.Close()
-			s.addHistoryEntry(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "chat/completions (stream)")
+			outputTokens := streamOpenAIAsAnthropic(w, resp.Body, candidate, estimateTokens(payload), s.setReasoningLocked)
+			s.addHistoryEntryWithUsage(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "chat/completions (stream)", tokenUsage{
+				InputTokens:  estimateTokens(payload),
+				OutputTokens: outputTokens,
+				Client:       client,
+			})
 			return
 		}
 
 		var out openAIResponse
 		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-			resp.Body.Close()
 			writeError(w, http.StatusBadGateway, err)
-			s.addHistoryEntry(r.Method, r.URL.Path, http.StatusBadGateway, duration, candidate, "chat/completions")
+			s.addHistoryEntryWithUsage(r.Method, r.URL.Path, http.StatusBadGateway, duration, candidate, "chat/completions", tokenUsage{Client: client})
 			return
 		}
-		resp.Body.Close()
 		s.cacheReasoningContent(out)
-		message := openAIToAnthropic(out, candidate)
+		message := openAIToAnthropic(out, candidate, estimateTokens(payload))
 		writeJSON(w, http.StatusOK, message)
-		s.addHistoryEntry(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "chat/completions")
+		usage := usageFromOpenAI(out.Usage, estimateTokens(payload))
+		usage.Client = client
+		s.addHistoryEntryWithUsage(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "chat/completions", usage)
 		return
 	}
 
@@ -577,7 +620,11 @@ func (s *Server) thinkingBudgetTokens() int {
 }
 
 func (s *Server) newUpstreamRequest(ctx context.Context, method, path string, body io.Reader, profile config.Profile) (*http.Request, error) {
-	upstream, err := url.Parse(s.upstream)
+	s.configMu.RLock()
+	upstreamStr := s.upstream
+	s.configMu.RUnlock()
+
+	upstream, err := url.Parse(upstreamStr)
 	if err != nil {
 		return nil, err
 	}
@@ -650,6 +697,15 @@ func (s *Server) cacheReasoningContent(resp openAIResponse) {
 func (s *Server) setReasoning(id, reasoning string) {
 	if _, exists := s.reasoningByTool[id]; !exists {
 		s.reasoningOrder = append(s.reasoningOrder, id)
+	} else {
+		// Move existing ID to the end (most recently used)
+		for i, existingID := range s.reasoningOrder {
+			if existingID == id {
+				s.reasoningOrder = append(s.reasoningOrder[:i], s.reasoningOrder[i+1:]...)
+				s.reasoningOrder = append(s.reasoningOrder, id)
+				break
+			}
+		}
 	}
 	s.reasoningByTool[id] = reasoning
 	for len(s.reasoningByTool) > maxReasoningEntries {
@@ -680,14 +736,67 @@ func hasToolHistory(messages []openAIMessage) bool {
 	return false
 }
 
+func isClaudeDesktopRoute(r *http.Request) bool {
+	return strings.HasPrefix(r.URL.Path, "/claude-desktop/")
+}
+
 func (s *Server) profileFromRequest(r *http.Request) (config.Profile, string, error) {
 	name := strings.TrimSpace(r.Header.Get("X-Ocgt-Profile"))
+	if before, _, found := strings.Cut(name, ","); found {
+		name = strings.TrimSpace(before)
+	}
 	if name == "" {
 		name = strings.TrimSpace(r.URL.Query().Get("ocgt_profile"))
 	}
 	s.configMu.RLock()
 	defer s.configMu.RUnlock()
 	return s.config.Profile(name)
+}
+
+func clientSourceFromRequest(r *http.Request) string {
+	raw := strings.TrimSpace(r.Header.Get("X-Ocgt-Client"))
+	if raw == "" {
+		raw = clientFromCombinedProfileHeader(r.Header.Get("X-Ocgt-Profile"))
+	}
+	if raw == "" && isClaudeDesktopRoute(r) {
+		raw = "claude-app"
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "claude-code-cli", "cli", "claude cli":
+		return "Claude Code CLI"
+	case "vscode-claude-code", "vscode", "vs code", "vscode claude code":
+		return "VS Code Claude Code"
+	case "claude-app", "claude", "claude desktop", "desktop":
+		return "Claude app"
+	case "":
+		return "Unknown"
+	default:
+		clean := strings.Map(func(r rune) rune {
+			if r < 32 || r == 127 {
+				return -1
+			}
+			return r
+		}, raw)
+		clean = strings.TrimSpace(clean)
+		if len(clean) > 64 {
+			clean = clean[:64]
+		}
+		if clean == "" {
+			return "Unknown"
+		}
+		return clean
+	}
+}
+
+func clientFromCombinedProfileHeader(value string) string {
+	for _, part := range strings.Split(value, ",") {
+		name, val, ok := strings.Cut(strings.TrimSpace(part), ":")
+		if !ok || !strings.EqualFold(strings.TrimSpace(name), "X-Ocgt-Client") {
+			continue
+		}
+		return strings.TrimSpace(val)
+	}
+	return ""
 }
 
 func normalizeModels(data []byte, profile config.Profile) map[string]any {
@@ -761,23 +870,46 @@ func (s *Server) addHistoryEntry(method, path string, status int, duration time.
 }
 
 func (s *Server) addHistoryEntryWithError(method, path string, status int, duration time.Duration, model, route, errorText string) {
+	s.addHistoryEntryWithUsageAndError(method, path, status, duration, model, route, tokenUsage{}, errorText)
+}
+
+type tokenUsage struct {
+	InputTokens         int
+	OutputTokens        int
+	CacheCreationTokens int
+	CacheReadTokens     int
+	Client              string
+}
+
+func (s *Server) addHistoryEntryWithUsage(method, path string, status int, duration time.Duration, model, route string, usage tokenUsage) {
+	s.addHistoryEntryWithUsageAndError(method, path, status, duration, model, route, usage, "")
+}
+
+func (s *Server) addHistoryEntryWithUsageAndError(method, path string, status int, duration time.Duration, model, route string, usage tokenUsage, errorText string) {
 	s.historyMu.Lock()
-	defer s.historyMu.Unlock()
 	entry := requestLogEntry{
-		ID:       fmt.Sprintf("req_%d", time.Now().UnixNano()),
-		Time:     time.Now(),
-		Method:   method,
-		Path:     path,
-		Status:   status,
-		Duration: duration.Round(time.Millisecond).String(),
-		Model:    model,
-		Route:    route,
-		Error:    errorText,
+		ID:                  fmt.Sprintf("req_%d", time.Now().UnixNano()),
+		Time:                time.Now(),
+		Method:              method,
+		Path:                path,
+		Status:              status,
+		Duration:            duration.Round(time.Millisecond).String(),
+		Model:               model,
+		Route:               route,
+		Client:              usage.Client,
+		InputTokens:         usage.InputTokens,
+		OutputTokens:        usage.OutputTokens,
+		CacheCreationTokens: usage.CacheCreationTokens,
+		CacheReadTokens:     usage.CacheReadTokens,
+		TotalTokens:         usage.InputTokens + usage.OutputTokens + usage.CacheCreationTokens + usage.CacheReadTokens,
+		Error:               errorText,
 	}
 	s.history = append([]requestLogEntry{entry}, s.history...) // prepend so newest is first
 	if len(s.history) > 100 {
 		s.history = s.history[:100]
 	}
+	s.historyMu.Unlock()
+	s.persistHistoryEntry(entry)
 }
 
 func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
@@ -788,6 +920,15 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 	upstream := s.config.Upstream
 	timeoutSeconds := s.config.RequestTimeoutSeconds
 	thinkingBudgetTokens := s.config.ThinkingBudgetTokens()
+	rateLimitPerSecond, rateLimitBurst := s.config.RateLimit()
+	claudeEnv := map[string]string{}
+	if len(s.config.ClaudeEnv) > 0 {
+		for key, value := range s.config.ClaudeEnv {
+			claudeEnv[key] = value
+		}
+	} else {
+		claudeEnv = config.DefaultClaudeEnv(profile)
+	}
 	authEnabled := s.config.LocalAuthToken != ""
 	configPath := s.configPath
 	s.configMu.RUnlock()
@@ -798,6 +939,9 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 		"upstream":                   upstream,
 		"request_timeout_seconds":    timeoutSeconds,
 		"max_thinking_budget_tokens": thinkingBudgetTokens,
+		"rate_limit_per_second":      rateLimitPerSecond,
+		"rate_limit_burst":           rateLimitBurst,
+		"claude_env":                 claudeEnv,
 		"api_key_configured":         profile.APIKeyValue() != "",
 		"config_path":                configPath,
 		"active_profile":             activeProfile,
@@ -852,7 +996,7 @@ func (s *Server) apiSetActiveProfile(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Profile string `json:"profile"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, MaxBodySize)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -892,8 +1036,12 @@ func (s *Server) apiSetKey(w http.ResponseWriter, r *http.Request) {
 		ModelAliases            map[string]string `json:"model_aliases"`
 		RequestTimeoutSeconds   int               `json:"request_timeout_seconds"`
 		MaxThinkingBudgetTokens int               `json:"max_thinking_budget_tokens"`
+		Upstream                string            `json:"upstream"`
+		RateLimitPerSecond      int               `json:"rate_limit_per_second"`
+		RateLimitBurst          int               `json:"rate_limit_burst"`
+		ClaudeEnv               map[string]string `json:"claude_env"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, MaxBodySize)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -919,6 +1067,14 @@ func (s *Server) apiSetKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("max_thinking_budget_tokens must be -1, 0, or between 1 and 8192, got %d", req.MaxThinkingBudgetTokens))
 		return
 	}
+	if req.RateLimitPerSecond != 0 && (req.RateLimitPerSecond < 1 || req.RateLimitPerSecond > 10000) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("rate_limit_per_second must be between 1 and 10000, got %d", req.RateLimitPerSecond))
+		return
+	}
+	if req.RateLimitBurst != 0 && (req.RateLimitBurst < 1 || req.RateLimitBurst > 100000) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("rate_limit_burst must be between 1 and 100000, got %d", req.RateLimitBurst))
+		return
+	}
 
 	// If the API key looks masked (contains "..." or is the short placeholder),
 	// don't overwrite the existing key — the frontend sent back the masked value
@@ -941,10 +1097,28 @@ func (s *Server) apiSetKey(w http.ResponseWriter, r *http.Request) {
 	s.config.Profiles[profileName] = p
 	if req.RequestTimeoutSeconds != 0 {
 		s.config.RequestTimeoutSeconds = req.RequestTimeoutSeconds
-		s.client.Timeout = s.config.RequestTimeout()
+		// Replace client to avoid racing with concurrent readers.
+		old := s.client
+		s.client = &http.Client{
+			Timeout:   s.config.RequestTimeout(),
+			Transport: old.Transport,
+		}
 	}
 	if req.MaxThinkingBudgetTokens != 0 {
 		s.config.MaxThinkingBudgetTokens = req.MaxThinkingBudgetTokens
+	}
+	if strings.TrimSpace(req.Upstream) != "" {
+		s.config.Upstream = strings.TrimSpace(req.Upstream)
+		s.upstream = s.config.Upstream
+	}
+	if req.RateLimitPerSecond != 0 {
+		s.config.RateLimitPerSecond = req.RateLimitPerSecond
+	}
+	if req.RateLimitBurst != 0 {
+		s.config.RateLimitBurst = req.RateLimitBurst
+	}
+	if req.ClaudeEnv != nil {
+		s.config.ClaudeEnv = req.ClaudeEnv
 	}
 
 	if err := s.config.Save(s.configPath); err != nil {
@@ -970,10 +1144,18 @@ func (s *Server) apiHistory(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, hist)
 	case http.MethodDelete:
 		s.historyMu.Lock()
-		s.history = s.history[:0]
+		s.history = nil
 		s.historyMu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]string{"status": "cleared"})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, fmt.Errorf("method %s not supported", r.Method))
 	}
+}
+
+func (s *Server) apiVersion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, fmt.Errorf("method %s not supported", r.Method))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"version": version.Version})
 }

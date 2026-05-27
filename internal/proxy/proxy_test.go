@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ethan-blue/open-code-go-tools/internal/config"
 )
@@ -202,6 +205,61 @@ func TestStreamOpenAIAsAnthropic_DoneSignal(t *testing.T) {
 	respBody := rr.Body.String()
 	if !strings.Contains(respBody, "message_stop") {
 		t.Fatalf("expected message_stop event after [DONE], got: %s", respBody)
+	}
+}
+
+// TestStreamReasoningContentPreservesSpaces verifies that reasoning content
+// streamed in chunks preserves spaces between words. This is critical because
+// upstream SSE chunks can split words across boundaries (e.g., "hel" + "lo world").
+func TestStreamReasoningContentPreservesSpaces(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		// Send reasoning content split across multiple chunks with a word boundary split
+		fmt.Fprintf(w, "data: {\"id\":\"chatcmpl_1\",\"model\":\"kimi-k2.6\",\"choices\":[{\"delta\":{\"reasoning_content\":\"Let me \"}}]}\n\n")
+		fmt.Fprintf(w, "data: {\"id\":\"chatcmpl_1\",\"model\":\"kimi-k2.6\",\"choices\":[{\"delta\":{\"reasoning_content\":\"think about \"}}]}\n\n")
+		fmt.Fprintf(w, "data: {\"id\":\"chatcmpl_1\",\"model\":\"kimi-k2.6\",\"choices\":[{\"delta\":{\"reasoning_content\":\" this problem\"}}]}\n\n")
+		fmt.Fprintf(w, "data: {\"id\":\"chatcmpl_1\",\"model\":\"kimi-k2.6\",\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n")
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+
+	srv, err := New(config.Config{
+		Listen:        "127.0.0.1:0",
+		Upstream:      upstream.URL,
+		ActiveProfile: "test",
+		Profiles: map[string]config.Profile{
+			"test": {APIKey: "test-key", DefaultModel: "kimi-k2.6"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := []byte(`{"model":"kimi-k2.6","stream":true,"max_tokens":16,"messages":[{"role":"user","content":"think"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	respBody := rr.Body.String()
+
+	// The accumulated thinking should preserve spaces: "Let me think about  this problem"
+	// (note: the third chunk starts with a space, so there's a double space, which is correct)
+	if !strings.Contains(respBody, "Let me ") {
+		t.Fatalf("expected 'Let me ' in thinking delta, got: %s", respBody)
+	}
+	if !strings.Contains(respBody, "think about ") {
+		t.Fatalf("expected 'think about ' in thinking delta, got: %s", respBody)
+	}
+	if !strings.Contains(respBody, " this problem") {
+		t.Fatalf("expected ' this problem' in thinking delta, got: %s", respBody)
+	}
+	if !strings.Contains(respBody, "thinking_delta") {
+		t.Fatalf("expected thinking_delta events, got: %s", respBody)
 	}
 }
 
@@ -414,10 +472,9 @@ func TestMessagesWithOversizedBody(t *testing.T) {
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
 
-	// Should still process but truncated - the handler should fail gracefully
-	// Since we truncate at MaxBodySize, the JSON will be incomplete
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for oversized body, got %d", rr.Code)
+	// Should return 413 Request Entity Too Large
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 for oversized body, got %d", rr.Code)
 	}
 }
 
@@ -568,6 +625,56 @@ func TestUpstreamErrorHistoryIncludesReason(t *testing.T) {
 	}
 	if srv.history[0].Error != "upstream temporarily unavailable" {
 		t.Fatalf("history error = %q", srv.history[0].Error)
+	}
+}
+
+func TestHistoryLogPersistsJSONL(t *testing.T) {
+	srv, err := New(config.Config{
+		Listen:        "127.0.0.1:0",
+		Upstream:      "https://example.com",
+		ActiveProfile: "test",
+		Profiles: map[string]config.Profile{
+			"test": {APIKey: "test-key", DefaultModel: "kimi-k2.6"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	srv.ConfigureHistoryLog(true, dir, 14)
+	srv.addHistoryEntryWithUsage(http.MethodPost, "/v1/messages", http.StatusOK, 12*time.Millisecond, "kimi-k2.6", "chat/completions", tokenUsage{
+		InputTokens:  10,
+		OutputTokens: 3,
+	})
+
+	files, err := filepath.Glob(filepath.Join(dir, "ocgt-*.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("expected one history log file, got %d", len(files))
+	}
+	data, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"input_tokens":10`) || !strings.Contains(string(data), `"total_tokens":13`) {
+		t.Fatalf("history log missing token fields: %s", data)
+	}
+}
+
+func TestClientSourceFromRequest(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	req.Header.Set("X-Ocgt-Client", "vscode-claude-code")
+
+	if got := clientSourceFromRequest(req); got != "VS Code Claude Code" {
+		t.Fatalf("client source = %q", got)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	req.Header.Set("X-Ocgt-Profile", "opencode-go, X-Ocgt-Client: claude-app")
+	if got := clientSourceFromRequest(req); got != "Claude app" {
+		t.Fatalf("combined header client source = %q", got)
 	}
 }
 
@@ -1055,7 +1162,7 @@ func TestOpenAIToAnthropic(t *testing.T) {
 	if err := json.Unmarshal(data, &resp); err != nil {
 		t.Fatal(err)
 	}
-	out := openAIToAnthropic(resp, "kimi-k2.6")
+	out := openAIToAnthropic(resp, "kimi-k2.6", 0)
 	if out["type"] != "message" || out["role"] != "assistant" {
 		t.Fatalf("unexpected anthropic response: %#v", out)
 	}
@@ -1071,7 +1178,7 @@ func TestOpenAIToAnthropicWithReasoning(t *testing.T) {
 	if err := json.Unmarshal(data, &resp); err != nil {
 		t.Fatal(err)
 	}
-	out := openAIToAnthropic(resp, "deepseek-v4-pro")
+	out := openAIToAnthropic(resp, "deepseek-v4-pro", 0)
 	content := out["content"].([]map[string]any)
 	if len(content) != 2 {
 		t.Fatalf("expected thinking + text blocks, got %d", len(content))
@@ -1084,6 +1191,35 @@ func TestOpenAIToAnthropicWithReasoning(t *testing.T) {
 	}
 	if content[1]["type"] != "text" {
 		t.Fatalf("second block type = %q, want text", content[1]["type"])
+	}
+}
+
+func TestOpenAIToAnthropicUsesFallbackInputTokens(t *testing.T) {
+	var resp openAIResponse
+	data := []byte(`{"id":"chatcmpl_1","model":"kimi-k2.6","choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"completion_tokens":2}}`)
+	if err := json.Unmarshal(data, &resp); err != nil {
+		t.Fatal(err)
+	}
+	out := openAIToAnthropic(resp, "kimi-k2.6", 123)
+	usage := out["usage"].(map[string]int)
+	if usage["input_tokens"] != 123 {
+		t.Fatalf("input_tokens = %d, want fallback 123", usage["input_tokens"])
+	}
+	if usage["output_tokens"] != 2 {
+		t.Fatalf("output_tokens = %d, want 2", usage["output_tokens"])
+	}
+}
+
+func TestStreamOpenAIAsAnthropicIncludesInputTokens(t *testing.T) {
+	body := strings.NewReader("data: {\"id\":\"chatcmpl_1\",\"model\":\"kimi-k2.6\",\"choices\":[{\"delta\":{\"content\":\"ok\"}}],\"usage\":{\"completion_tokens\":2}}\n\ndata: [DONE]\n\n")
+	rr := httptest.NewRecorder()
+	outputTokens := streamOpenAIAsAnthropic(rr, body, "kimi-k2.6", 77, nil)
+	if outputTokens != 2 {
+		t.Fatalf("output tokens = %d, want 2", outputTokens)
+	}
+	resp := rr.Body.String()
+	if !strings.Contains(resp, `"input_tokens":77`) {
+		t.Fatalf("expected input token usage in stream, got: %s", resp)
 	}
 }
 
@@ -1511,5 +1647,185 @@ func TestCircuitBreaker(t *testing.T) {
 	srv.recordModelSuccess(model)
 	if srv.isModelCircuitTripped(model) {
 		t.Fatalf("circuit should be untripped after recording success")
+	}
+}
+
+// ----- reasoningTextRaw unit tests -----
+
+func TestReasoningTextRawPreservesSpaces(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  []any
+		expect string
+	}{
+		{
+			name:   "leading space preserved",
+			input:  []any{" hello"},
+			expect: " hello",
+		},
+		{
+			name:   "trailing space preserved",
+			input:  []any{"hello "},
+			expect: "hello ",
+		},
+		{
+			name:   "internal space preserved",
+			input:  []any{"hello world"},
+			expect: "hello world",
+		},
+		{
+			name:   "empty string returns empty",
+			input:  []any{""},
+			expect: "",
+		},
+		{
+			name:   "nil returns empty",
+			input:  []any{nil},
+			expect: "",
+		},
+		{
+			name:   "first non-empty value returned",
+			input:  []any{nil, "", " hello "},
+			expect: " hello ",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := reasoningTextRaw(tc.input...)
+			if got != tc.expect {
+				t.Fatalf("reasoningTextRaw(%v) = %q, want %q", tc.input, got, tc.expect)
+			}
+		})
+	}
+}
+
+func TestReasoningTextTrimsSpaces(t *testing.T) {
+	// Verify that reasoningText (non-raw) still trims spaces
+	got := reasoningText(" hello world ")
+	if got != "hello world" {
+		t.Fatalf("reasoningText should trim spaces, got %q", got)
+	}
+}
+
+// ----- Rate limiter tests -----
+
+func TestRateLimiter_Allow(t *testing.T) {
+	rl := newRateLimiter(10, 20) // 10 req/s, burst 20
+
+	// First request should always be allowed
+	if !rl.allow("192.168.1.1") {
+		t.Fatal("first request should be allowed")
+	}
+
+	// Should allow up to burst size
+	for i := 0; i < 19; i++ {
+		if !rl.allow("192.168.1.1") {
+			t.Fatalf("request %d should be allowed (within burst)", i+2)
+		}
+	}
+
+	// 21st request should be denied (burst exhausted)
+	if rl.allow("192.168.1.1") {
+		t.Fatal("request should be denied after burst exhausted")
+	}
+
+	// Different IP should be allowed
+	if !rl.allow("192.168.1.2") {
+		t.Fatal("different IP should be allowed")
+	}
+}
+
+func TestRateLimiter_Refill(t *testing.T) {
+	rl := newRateLimiter(10, 5) // 10 req/s, burst 5
+
+	// Exhaust burst
+	for i := 0; i < 5; i++ {
+		if !rl.allow("10.0.0.1") {
+			t.Fatalf("request %d should be allowed", i+1)
+		}
+	}
+
+	// Should be denied now
+	if rl.allow("10.0.0.1") {
+		t.Fatal("should be denied after burst exhausted")
+	}
+
+	// Manually set lastSeen to 1 second ago to simulate time passing
+	rl.mu.Lock()
+	if bucket, ok := rl.clients["10.0.0.1"]; ok {
+		bucket.lastSeen = bucket.lastSeen.Add(-1 * time.Second)
+	}
+	rl.mu.Unlock()
+
+	// After 1 second at 10 req/s, should have 10 tokens refill (but capped at burst=5)
+	if !rl.allow("10.0.0.1") {
+		t.Fatal("should be allowed after refill period")
+	}
+}
+
+// ----- Circuit breaker tests -----
+
+func TestCircuitBreaker_RecordFailure(t *testing.T) {
+	srv, err := New(config.Config{
+		Listen:        "127.0.0.1:0",
+		Upstream:      "http://localhost:9999",
+		ActiveProfile: "test",
+		Profiles: map[string]config.Profile{
+			"test": {APIKey: "test-key", DefaultModel: "test-model"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Initially not tripped
+	if srv.isModelCircuitTripped("test-model") {
+		t.Fatal("should not be tripped initially")
+	}
+
+	// First failure - not tripped
+	srv.recordModelFailure("test-model")
+	if srv.isModelCircuitTripped("test-model") {
+		t.Fatal("should not be tripped after 1 failure")
+	}
+
+	// Second failure - still not tripped
+	srv.recordModelFailure("test-model")
+	if srv.isModelCircuitTripped("test-model") {
+		t.Fatal("should not be tripped after 2 failures")
+	}
+
+	// Third failure - should trip
+	srv.recordModelFailure("test-model")
+	if !srv.isModelCircuitTripped("test-model") {
+		t.Fatal("should be tripped after 3 failures")
+	}
+}
+
+func TestCircuitBreaker_Reset(t *testing.T) {
+	srv, err := New(config.Config{
+		Listen:        "127.0.0.1:0",
+		Upstream:      "http://localhost:9999",
+		ActiveProfile: "test",
+		Profiles: map[string]config.Profile{
+			"test": {APIKey: "test-key", DefaultModel: "test-model"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Trip the circuit breaker
+	for i := 0; i < 3; i++ {
+		srv.recordModelFailure("test-model")
+	}
+	if !srv.isModelCircuitTripped("test-model") {
+		t.Fatal("should be tripped after 3 failures")
+	}
+
+	// Success should reset
+	srv.recordModelSuccess("test-model")
+	if srv.isModelCircuitTripped("test-model") {
+		t.Fatal("should not be tripped after success")
 	}
 }

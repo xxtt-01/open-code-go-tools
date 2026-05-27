@@ -6,6 +6,14 @@ export function ClearClaudeDesktop() {
   return window['go']['main']['App']['ClearClaudeDesktop']();
 }
 
+export function ClearClaudeDesktopApp() {
+  return window['go']['main']['App']['ClearClaudeDesktopApp']();
+}
+
+export function ClearSystemEnv() {
+  return window['go']['main']['App']['ClearSystemEnv']();
+}
+
 export function GetListenAddress() {
   return window['go']['main']['App']['GetListenAddress']();
 }
@@ -26,8 +34,24 @@ export function InstallClaudeUserEnv() {
   return window['go']['main']['App']['InstallClaudeUserEnv']();
 }
 
+export function InstallVSCodeEnv() {
+  return window['go']['main']['App']['InstallVSCodeEnv']();
+}
+
+export function IsClaudeDesktopAppConfigured() {
+  return window['go']['main']['App']['IsClaudeDesktopAppConfigured']();
+}
+
 export function IsClaudeDesktopConfigured() {
   return window['go']['main']['App']['IsClaudeDesktopConfigured']();
+}
+
+export function IsSystemEnvConfigured() {
+  return window['go']['main']['App']['IsSystemEnvConfigured']();
+}
+
+export function IsVSCodeConfigured() {
+  return window['go']['main']['App']['IsVSCodeConfigured']();
 }
 
 export function LaunchClaudeTerminal(arg1, arg2) {
@@ -38,22 +62,46 @@ export function OpenConfigLocation() {
   return window['go']['main']['App']['OpenConfigLocation']();
 }
 
+export function OpenLogLocation() {
+  return window['go']['main']['App']['OpenLogLocation']();
+}
+
 export function QuitApp() {
   return window['go']['main']['App']['QuitApp']();
+}
+
+export function RemoveVSCodeEnv() {
+  return window['go']['main']['App']['RemoveVSCodeEnv']();
+}
+
+export function SaveLogPreferences(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SaveLogPreferences'](arg1, arg2, arg3);
 }
 
 export function SavePreferences(arg1) {
   return window['go']['main']['App']['SavePreferences'](arg1);
 }
 
-export function SaveProfileConfig(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
-  return window['go']['main']['App']['SaveProfileConfig'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+export function SaveProfileConfig(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12) {
+  return window['go']['main']['App']['SaveProfileConfig'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12);
+}
+
+export function SaveUIPreferences(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['SaveUIPreferences'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
 export function SetupClaudeDesktop() {
   return window['go']['main']['App']['SetupClaudeDesktop']();
 }
 
+export function SetupClaudeDesktopApp() {
+  return window['go']['main']['App']['SetupClaudeDesktopApp']();
+}
+
 export function ShowAboutDialog() {
   return window['go']['main']['App']['ShowAboutDialog']();
+}
+
+export function SyncConfiguredIntegrations() {
+  return window['go']['main']['App']['SyncConfiguredIntegrations']();
 }

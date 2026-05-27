@@ -30,25 +30,34 @@ func stripHopByHopHeaders(h http.Header) {
 	}
 }
 
+var copyBufPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, 32*1024)
+		return &buf
+	},
+}
+
 func copyResponse(w http.ResponseWriter, body io.Reader) (int64, error) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		return io.Copy(w, body)
 	}
-	buf := make([]byte, 32*1024)
+	bufp := copyBufPool.Get().(*[]byte)
+	defer copyBufPool.Put(bufp)
+	buf := *bufp
 	var written int64
 	for {
 		n, readErr := body.Read(buf)
 		if n > 0 {
 			m, writeErr := w.Write(buf[:n])
 			written += int64(m)
-			flusher.Flush()
 			if writeErr != nil {
 				return written, writeErr
 			}
 			if m != n {
 				return written, io.ErrShortWrite
 			}
+			flusher.Flush()
 		}
 		if readErr != nil {
 			if readErr == io.EOF {
@@ -60,17 +69,26 @@ func copyResponse(w http.ResponseWriter, body io.Reader) (int64, error) {
 }
 
 func estimateTokens(payload anthropicRequest) int {
-	text := payload.Model + "\n" + blocksToText(payload.System)
+	var sb strings.Builder
+	sb.WriteString(payload.Model)
+	sb.WriteByte('\n')
+	sb.WriteString(blocksToText(payload.System))
 	for _, msg := range payload.Messages {
-		text += "\n" + msg.Role + ":" + blocksToText(msg.Content)
+		sb.WriteByte('\n')
+		sb.WriteString(msg.Role)
+		sb.WriteByte(':')
+		sb.WriteString(blocksToText(msg.Content))
 	}
 	for _, tool := range payload.Tools {
-		text += "\n" + tool.Name + ":" + tool.Description
+		sb.WriteByte('\n')
+		sb.WriteString(tool.Name)
+		sb.WriteByte(':')
+		sb.WriteString(tool.Description)
 	}
 	// CJK characters typically use 2-3 tokens each vs ~4 chars per token for ASCII.
 	// Count non-ASCII runes more heavily.
 	tokenEstimate := 0
-	for _, r := range text {
+	for _, r := range sb.String() {
 		if r > 127 {
 			tokenEstimate += 3 // CJK characters roughly 2-3 tokens each
 		} else {
@@ -177,7 +195,7 @@ func requestLogger(next http.Handler) http.Handler {
 			if isLocalhostOrigin(origin) {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-Ocgt-Profile, X-Ocgt-Local-Token")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-Ocgt-Profile, X-Ocgt-Client, X-Ocgt-Local-Token")
 			}
 		}
 
@@ -189,7 +207,11 @@ func requestLogger(next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		log.Printf("%s %s status=%d %s", r.Method, r.URL.RequestURI(), rec.status, time.Since(start).Round(time.Millisecond))
+		method := strings.ReplaceAll(r.Method, "\n", "\\n")
+		path := strings.ReplaceAll(r.URL.RequestURI(), "\n", "\\n")
+		status := rec.status
+		duration := time.Since(start).Round(time.Millisecond)
+		go log.Printf("%s %s status=%d %s", method, path, status, duration)
 	})
 }
 
@@ -266,11 +288,11 @@ func (r *statusRecorder) Flush() {
 
 // rateLimiter implements a simple in-memory rate limiter using token bucket algorithm
 type rateLimiter struct {
-	mu       sync.Mutex
-	clients  map[string]*clientBucket
-	rate     int           // requests per second
-	burst    int           // max burst size
-	cleanup  time.Duration // cleanup interval
+	mu        sync.Mutex
+	clients   map[string]*clientBucket
+	rate      int           // requests per second
+	burst     int           // max burst size
+	cleanup   time.Duration // cleanup interval
 	lastClean time.Time
 }
 
@@ -287,6 +309,18 @@ func newRateLimiter(rate, burst int) *rateLimiter {
 		burst:     burst,
 		cleanup:   time.Minute,
 		lastClean: time.Now(),
+	}
+}
+
+func (rl *rateLimiter) setLimits(rate, burst int) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	rl.rate = rate
+	rl.burst = burst
+	for _, bucket := range rl.clients {
+		if bucket.tokens > float64(burst) {
+			bucket.tokens = float64(burst)
+		}
 	}
 }
 
@@ -349,7 +383,8 @@ func rateLimitMiddleware(rl *rateLimiter, next http.Handler) http.Handler {
 	})
 }
 
-// getClientIP extracts the client IP from the request
+// getClientIP extracts the client IP from the request, returning a canonical
+// form so that the same host always produces the same rate-limit key.
 func getClientIP(r *http.Request) string {
 	// Use the actual TCP connection address as the primary source of truth.
 	// X-Forwarded-For is ONLY trusted when the request comes from a known proxy
@@ -357,6 +392,15 @@ func getClientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
+	}
+
+	// Normalize: strip brackets from IPv6 (e.g. "[::1]" → "::1") and
+	// convert to the canonical net.IP string representation so that
+	// bracketed/unbracketed and port-bearing variants all map to the
+	// same rate-limit bucket.
+	host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+	if ip := net.ParseIP(host); ip != nil {
+		host = ip.String()
 	}
 
 	// Only trust X-Forwarded-For when the direct connection is from localhost

@@ -3,9 +3,10 @@
 package main
 
 import (
-	"os/exec"
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/windows/registry"
 )
 
 const (
@@ -20,30 +21,66 @@ var (
 	procSendMessageTimeout = user32.NewProc("SendMessageTimeoutW")
 )
 
-func setWindowsUserEnvironment(name, value string) error {
-	// Use PowerShell [Environment]::SetEnvironmentVariable instead of deprecated setx.exe
-	// which has a 1024 character value limit.
-	script := "[Environment]::SetEnvironmentVariable($args[0], $args[1], 'User')"
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", "& { "+script+" }", "--", name, value)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	if err := cmd.Run(); err != nil {
-		return err
-	}
-	broadcastEnvironmentChange()
-	return nil
+func setWindowsUserEnvironment(name, value string) error {
+	return setWindowsUserEnvironmentBatch(map[string]string{name: value})
 }
 
-func unsetWindowsUserEnvironment(name string) error {
-	cmd := exec.Command("reg.exe", "delete", `HKCU\Environment`, "/v", name, "/f")
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			return nil
-		}
+func setWindowsUserEnvironmentBatch(values map[string]string) error {
+	key, err := registry.OpenKey(registry.CURRENT_USER, `Environment`, registry.SET_VALUE)
+	if err != nil {
 		return err
+	}
+	defer key.Close()
+
+	for name, value := range values {
+		if err := key.SetStringValue(name, value); err != nil {
+			return err
+		}
 	}
 	broadcastEnvironmentChange()
 	return nil
+}
+
+func unsetWindowsUserEnvironment(name string) error {
+	return unsetWindowsUserEnvironmentBatch([]string{name})
+}
+
+func unsetWindowsUserEnvironmentBatch(names []string) error {
+	key, err := registry.OpenKey(registry.CURRENT_USER, `Environment`, registry.QUERY_VALUE|registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer key.Close()
+
+	changed := false
+	for _, name := range names {
+		err := key.DeleteValue(name)
+		if err == nil {
+			changed = true
+			continue
+		}
+		if err != registry.ErrNotExist {
+			return err
+		}
+	}
+	if changed {
+		broadcastEnvironmentChange()
+	}
+	return nil
+}
+
+func getWindowsUserEnvironment(name string) (string, bool) {
+	key, err := registry.OpenKey(registry.CURRENT_USER, `Environment`, registry.QUERY_VALUE)
+	if err != nil {
+		return "", false
+	}
+	defer key.Close()
+
+	value, _, err := key.GetStringValue(name)
+	if err != nil {
+		return "", false
+	}
+	return value, true
 }
 
 func broadcastEnvironmentChange() {
@@ -57,7 +94,7 @@ func broadcastEnvironmentChange() {
 		0,
 		uintptr(unsafe.Pointer(msg)),
 		uintptr(smtoAbortIfHung),
-		uintptr(5000),
+		uintptr(1000),
 		0,
 	)
 }
