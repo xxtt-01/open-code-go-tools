@@ -21,7 +21,6 @@ import (
 	"github.com/ethan-blue/open-code-go-tools/internal/config"
 	"github.com/ethan-blue/open-code-go-tools/internal/preferences"
 	"github.com/ethan-blue/open-code-go-tools/internal/proxy"
-	"github.com/getlantern/systray"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -32,13 +31,6 @@ type App struct {
 	cancelFunc context.CancelFunc
 	actionCh   chan trayAction
 	quitCh     chan struct{} // signals menu click listener goroutine to exit
-
-	// Systray menu items
-	mShow     *systray.MenuItem
-	mHide     *systray.MenuItem
-	mSettings *systray.MenuItem
-	mAbout    *systray.MenuItem
-	mQuit     *systray.MenuItem
 
 	// Allows explicit quit actions to bypass the close-to-tray prompt.
 	forceQuit     atomic.Bool
@@ -67,58 +59,6 @@ var appIconPng []byte
 //go:embed build/windows/icon.ico
 var appIconIco []byte
 
-func (a *App) setupSystray() {
-	a.setupTrayOnce.Do(func() {
-		onReady := func() {
-			if runtime.GOOS == "windows" {
-				systray.SetIcon(appIconIco)
-			} else {
-				systray.SetIcon(appIconPng)
-			}
-
-			// Use permanent bilingual titles to ensure 100% stability on Windows and avoid Win32 menu leaks
-			systray.SetTitle("ocgt")
-			systray.SetTooltip("ocgt 控制面板 / Control Panel")
-
-			a.mShow = systray.AddMenuItem("显示控制面板 / Show Panel", "显示主窗口 / Show Main Window")
-			a.mHide = systray.AddMenuItem("隐藏控制面板 / Hide Panel", "隐藏主窗口 / Hide to Tray")
-			a.mSettings = systray.AddMenuItem("打开设置 / Open Settings", "打开设置页面 / Open Settings Page")
-			a.mAbout = systray.AddMenuItem("关于 ocgt / About", "关于此程序 / About App")
-			systray.AddSeparator()
-			a.mQuit = systray.AddMenuItem("退出程序 / Quit", "彻底退出代理服务 / Quit Application")
-
-			go func() {
-				for {
-					select {
-					case <-a.mShow.ClickedCh:
-						a.enqueueTrayAction(trayActionShow)
-					case <-a.mHide.ClickedCh:
-						a.enqueueTrayAction(trayActionHide)
-					case <-a.mSettings.ClickedCh:
-						a.enqueueTrayAction(trayActionSettings)
-					case <-a.mAbout.ClickedCh:
-						a.enqueueTrayAction(trayActionAbout)
-					case <-a.mQuit.ClickedCh:
-						a.enqueueTrayAction(trayActionQuit)
-					case <-a.quitCh:
-						return
-					}
-				}
-			}()
-		}
-
-		onExit := func() {}
-		if runtime.GOOS == "windows" {
-			// On Windows, systray.Register() must own the calling thread.
-			// Wails already owns the main thread, so we use Run() which creates
-			// its own dedicated OS thread with LockOSThread internally.
-			// This completely prevents the right-click menu deadlock from thread contention.
-			go systray.Run(onReady, onExit)
-			return
-		}
-		go systray.Run(onReady, onExit)
-	})
-}
 
 func (a *App) showMainWindow(center bool) {
 	if a.ctx == nil {
@@ -262,9 +202,8 @@ func (a *App) domReady(ctx context.Context) {
 func (a *App) shutdown(ctx context.Context) {
 	// Signal menu click listener goroutine to exit
 	close(a.quitCh)
-	// systray.Quit must be called exactly once during app teardown.
-	// Do not call it anywhere else (e.g., beforeClose) to avoid Win32 message-pump deadlocks.
-	systray.Quit()
+	// Quit systray if supported
+	a.quitSystray()
 	if a.cancelFunc != nil {
 		log.Println("[GUI proxy] shutting down background proxy server...")
 		a.cancelFunc()
@@ -1070,7 +1009,7 @@ func (a *App) exitNow() {
 			// icon to avoid orphaned notification area icons on Windows.
 			time.AfterFunc(2*time.Second, func() {
 				log.Println("[exit] Wails did not shut down in time, forcing exit")
-				systray.Quit()
+				a.quitSystray()
 				os.Exit(0)
 			})
 			return
