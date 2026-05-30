@@ -97,9 +97,13 @@ jobs:
         with:
           name: ocgt ${{ github.ref_name }} GUI
           body: |
-            ocgt ${{ github.ref_name }}
+            ocgt ${{ github.ref_name }} 版本说明
 
-            This release provides native binaries for Windows, macOS, and Linux.
+            更新日志 (Changelog):
+            - 增加对 macOS 和 Linux 系统的原生二进制打包支持
+            - 新增在线同步功能，可直接获取最新官方可用模型
+            - 修复开启流式传输 (Streaming) 时无法统计 Token 消耗量的问题
+            - 优化文档与发布文本
           files: |
             dist/*
-          generate_release_notes: true
+          generate_release_notes: false
