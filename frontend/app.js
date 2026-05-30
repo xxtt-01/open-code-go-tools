@@ -92,6 +92,8 @@ let integrationStatusChecking = false;
 let integrationStatusTimer = null;
 let uiPreferencesLoaded = false;
 let uiPreferencesSaveTimer = null;
+let activeCustomModelCancel = null;
+let activeRawJsonClose = null;
 
 // ══════════════════════════════════════════════════════
 // §2 — i18n Dictionary
@@ -123,7 +125,7 @@ const i18n = {
         title_terminal: "快速连接",
 
         subtitle_terminal: "一键将代理接入终端、编辑器与 Claude 客户端",
-        hint_desktop_config_short: "一键将 ocgt 代理配置写入 Claude Code 桌面版",
+        hint_desktop_config_short: "一键将 ocgt 代理配置写入 Claude Code settings.json",
         title_history: "流量雷达监控",
         subtitle_history: "实时捕获并通过仪表盘统计来自 Claude Code 的 API 请求日志",
         lbl_listen: "监听地址",
@@ -132,13 +134,21 @@ const i18n = {
         lbl_api_key: "API Key 状态",
         lbl_profile: "当前活跃 Profile",
         lbl_model: "默认解析模型",
+        dash_integrations: "客户端集成状态",
+        dash_cli: "CLI",
+        dash_vscode: "VS Code",
+        dash_claude_desktop: "Claude Desktop",
         lbl_config_path: "本地配置文件路径",
-        lbl_desktop_config: "Claude Code 桌面版配置",
+        lbl_desktop_config: "Claude Code settings 配置",
         lbl_last_updated: "刚刚更新",
         btn_open_folder: "打开所在文件夹",
         sett_title: "一键配置管理中心",
         sett_section_api: "API 代理配置",
+        sett_section_api_desc: "Profile、API Key、默认模型与超时",
+        sett_section_network: "网络与限流",
+        sett_section_network_desc: "上游 API 地址、监听端口与请求限制",
         sett_section_model: "模型策略设置",
+        sett_section_model_desc: "思考强度与 Claude 模型别名映射",
         sett_section_prefs: "偏好设置",
         sett_profile: "当前配置 Profile",
         sett_default_model: "全局默认模型",
@@ -146,12 +156,13 @@ const i18n = {
         placeholder_api_key: "请输入您的 sk-... 密钥",
         sett_upstream: "上游 API 地址",
         sett_timeout: "请求超时（秒，1-3600）",
+        sett_rate_minute: "每分钟请求上限",
         sett_thinking: "思考强度（支持模型生效）",
-        opt_thinking_256: "快速 · 低延迟",
-        opt_thinking_512: "均衡",
-        opt_thinking_1024: "深度 · 复杂任务",
-        opt_thinking_2048: "最大 · 重度重构",
-        opt_thinking_off: "关闭思考",
+        opt_thinking_256: "低",
+        opt_thinking_512: "中",
+        opt_thinking_1024: "高",
+        opt_thinking_2048: "极高",
+        opt_thinking_off: "关",
         sett_mapping_title: "Claude 模型映射",
 
         sett_mapping_sonnet: "Sonnet",
@@ -163,13 +174,27 @@ const i18n = {
         sett_rate_limit: "每秒请求上限",
         sett_rate_burst: "突发请求容量",
         sett_claude_env_template: "Claude Code 环境变量模板",
-        opt_custom: "-- Custom Model --",
+        sett_advanced_summary: "监听、限流、环境变量与 JSON",
+        sett_log_title: "日志存储",
+        sett_log_desc: "日志保存路径与保留周期",
+        sett_env_title: "高级环境变量",
+        sett_env_desc: "Claude Code 环境参数开关与自定义 JSON 配置",
+        env_disable_nonessential: "禁用非必要流量",
+        env_enable_tool_search: "Tool Search",
+        env_disable_attribution: "禁用 Attribution",
+        env_disable_thinking: "禁用 Thinking",
+        env_max_output_tokens: "Max Output Tokens",
+        env_max_mcp_tokens: "Max MCP Tokens",
+        env_api_timeout: "API Timeout (ms)",
+        env_mcp_timeout: "MCP Timeout (ms)",
+        btn_edit_settings_json: "编辑 settings.json",
+        opt_custom: "自定义模型...",
         btn_save_config: "保存配置",
         btn_repair_env: "一键修复 Claude Code 系统环境变量",
         btn_reset_defaults: "重置为默认值",
         btn_about_app: "关于 ocgt",
         btn_clear_history: "清除历史记录",
-        hint_save: "保存只更新代理配置和当前已持久激活的目标；未激活的 CLI、VS Code 或 Claude Desktop 不会被写入。",
+        hint_save: "保存只更新代理配置和当前已配置的目标；未配置的 CLI、VS Code 或 Claude Desktop 不会被写入。",
         hint_tip: "💡 提示：只需在“客户端集成”中一键激活或配置您的终端，新建窗口即可开箱即用，无需在此做重复修改。",
         hint_changes_detected: "检测到未保存的更改",
         btn_cancel_changes: "取消更改",
@@ -177,9 +202,8 @@ const i18n = {
         sync_listen: "监听",
         sync_cli: "CLI",
         sync_vscode: "VS Code",
-        sync_claude: "Claude Code",
-        sync_active: "",
-        sync_inactive: "",
+        sync_claude: "Claude Desktop",
+        sync_active: "已配置",
         token_log_on: "日志开启",
         token_log_off: "日志关闭",
         term_title: "一键唤醒代理控制台",
@@ -187,10 +211,10 @@ const i18n = {
         btn_launch_term: "一键拉起配置终端 (Launch)",
         btn_persistent_env: "修复以后所有新终端环境变量",
 
-        btn_setup_desktop: "配置 Claude Code 桌面版",
+        btn_setup_desktop: "配置 Claude Code settings",
 
         status_configuring: "配置中...",
-        btn_setup_desktop_configured: "✓ 桌面版已配置 | 重新配置",
+        btn_setup_desktop_configured: "✓ 已配置 | 重新配置",
         btn_clear_desktop_config: "清除配置",
         status_clearing: "清除中...",
 
@@ -222,6 +246,12 @@ const i18n = {
         traf_input_output: "input + output",
 
         traf_rpm_hint: "RPM / 配额",
+        traf_filter_source: "来源",
+        traf_filter_all: "全部来源",
+        traf_filter_cli: "CLI",
+        traf_filter_vscode: "VS Code",
+        traf_filter_desktop: "Claude Desktop",
+        traf_filter_count: "显示 {{shown}} / {{total}} 条",
 
         th_tokens: "Tokens",
         th_client: "来源",
@@ -235,6 +265,7 @@ const i18n = {
         th_duration: "耗时",
         th_error: "错误原因",
         traf_empty: "暂无流量记录。请使用一键终端或在其他 Shell 中向代理发送请求...",
+        traf_empty_filtered: "当前来源筛选下没有流量记录。切换为“全部来源”可查看其他请求。",
         traf_listening: "实时流量雷达持续监听中",
         opt_model_kimi_26: "kimi-k2.6",
 
@@ -255,12 +286,12 @@ const i18n = {
         opt_mapping_opus_default: "kimi-k2.6 (recommended)",
         sett_close_behavior: "关闭窗口行为",
         opt_close_prompt: "每次询问",
-        opt_close_minimize: "最小化到托盘",
-        opt_close_exit: "直接退出",
+        opt_close_minimize: "隐藏到托盘，代理继续运行",
+        opt_close_exit: "退出程序，停止代理",
         close_dialog_title: "关闭窗口",
-        close_dialog_msg: "选择您希望的操作方式：",
-        close_dialog_exit: "彻底退出程序",
-        close_dialog_minimize: "最小化到系统托盘",
+        close_dialog_msg: "隐藏到托盘会继续代理请求；退出程序会停止本地代理。",
+        close_dialog_exit: "退出并停止代理",
+        close_dialog_minimize: "隐藏到托盘并继续代理",
         close_dialog_cancel: "取消",
         about_desc: "专为 Claude Code 与 OpenCode Go 打造的极简桌面控制面板与代理",
         about_author: "作者",
@@ -269,11 +300,13 @@ const i18n = {
         about_close: "关闭",
         err_api_key_required: "请输入 API Key",
         err_upstream_url: "请输入有效的 http(s) 地址",
+        err_listen_addr: "请输入有效的监听地址，例如 127.0.0.1:8787 或 :8787",
         err_timeout_range: "超时必须在 1-3600 秒之间",
         err_rate_limit_range: "范围必须在 1-10000 之间",
         err_rate_burst_range: "范围必须在 1-100000 之间",
+        err_rate_minute_range: "范围必须在 0-100000 之间，0 表示不限量",
         err_claude_env_json: "必须是 JSON 对象，键和值都必须是字符串",
-        toast_saved: "配置已保存；已激活目标已同步刷新",
+        toast_saved: "配置已保存；已配置目标已同步刷新",
         toast_save_failed: "保存失败",
         toast_env_repaired: "环境变量已修复并写入系统",
         toast_env_repair_failed: "环境变量修复失败",
@@ -283,13 +316,21 @@ const i18n = {
         toast_launch_failed: "终端启动失败",
         toast_launch_success: "终端已成功启动",
 
-        toast_desktop_setup_success: "✓ Claude Code 桌面版已配置。重启桌面版后生效。验证方式：启动桌面版后发送一条消息，观察 ocgt 日志中的请求记录。",
+        toast_desktop_setup_success: "✓ Claude Code settings 已配置。重新打开 Claude Code 后生效。验证方式：发送一条消息，观察 ocgt 日志中的请求记录。",
         toast_desktop_verify_hint: "验证方式：启动桌面版后发送一条消息，观察 ocgt 日志中的请求记录。",
-        toast_desktop_cleared: "桌面版配置已清除",
+        toast_desktop_cleared: "Claude Code settings 配置已清除",
 
         toast_history_cleared: "历史记录已清除",
         toast_validation_error: "请检查表单中的错误",
         toast_custom_model_prompt: "请输入自定义模型名称",
+        custom_model_title: "添加自定义模型",
+        custom_model_desc: "输入上游支持的模型 ID，保存后会写入当前 Profile。",
+        custom_model_label: "模型名称",
+        custom_model_placeholder: "例如 qwen3.6-plus 或 vendor/model-name",
+        custom_model_cancel: "取消",
+        custom_model_confirm: "使用此模型",
+        custom_model_required: "模型名称不能为空",
+        custom_model_too_long: "模型名称不能超过 128 个字符",
         toast_reset_confirm: "确定要重置所有设置为默认值吗？",
         toast_reset_done: "设置已重置为默认值",
         toast_confirm: "确认重置",
@@ -298,7 +339,7 @@ const i18n = {
         term_launched: "已启动终端 ✓",
         // Desktop-only warnings
         warn_desktop_only_launch: "一键启动终端仅在桌面版 app 客户端可用，请在桌面端中点击使用！",
-        warn_desktop_only_env: "桌面版配置接口未初始化，请尝试重启 ocgt",
+        warn_desktop_only_env: "Claude Code settings 配置接口未初始化，请尝试重启 ocgt",
         warn_desktop_only_folder: "该功能仅在桌面客户端可用。您的配置文件夹通常在您的个人用户目录下的 .ocgt 文件夹中。",
         // Env repair states
         env_repairing: "修复中...",
@@ -333,6 +374,8 @@ const i18n = {
         pref_behavior: "行为",
 
         pref_behavior_desc: "关闭窗口与系统交互",
+        pref_logs: "日志",
+        pref_logs_desc: "日志保存路径与保留周期",
         pref_log_save: "GUI 日志保存",
         pref_log_dir: "日志目录",
         pref_log_retention: "保留天数",
@@ -340,20 +383,35 @@ const i18n = {
         btn_save_log_prefs: "保存日志设置",
         toast_log_prefs_saved: "日志设置已保存",
         toast_log_prefs_failed: "日志设置保存失败",
+        raw_json_title: "编辑 Claude Code settings.json",
+        raw_json_desc: "高级入口：只修改 ~/.claude/settings.json。保存前请确认 JSON 格式有效。",
+        raw_json_cancel: "取消",
+        raw_json_save: "保存 settings.json",
+        raw_json_loading: "加载中...",
+        raw_json_load_failed: "加载 settings.json 失败: ",
+        raw_json_save_failed: "解析或保存 settings.json 失败: ",
+        raw_json_saved: "Claude Code settings.json 已保存",
         pref_danger: "重置与关于",
         pref_danger_desc: "恢复默认设置或查看版本信息",
-        badge_not_configured: "未激活",
-        badge_active: "已激活 ✓",
-        badge_inactive: "未激活",
+        badge_not_configured: "未配置",
+        badge_active: "已配置 ✓",
+        badge_inactive: "未配置",
         badge_recommended: "推荐",
+        integration_reapply_hint: "已配置；可再次点击补写当前 Profile 的代理配置。",
         int_quick_title: "快速开始：临时终端",
         int_quick_desc: "只为当前新开的终端窗口临时注入代理变量，不写入系统配置；可以连续打开多个窗口。",
         btn_launch_temp_term: "打开临时终端",
+        repair_title: "一键修复",
+        repair_desc: "修复 Claude Code settings、基础环境变量，并刷新已配置过的 VS Code / Claude Desktop 集成。",
+        btn_repair_all: "一键修复",
+        toast_repair_all_success: "基础配置和已配置集成已修复",
+        toast_repair_all_failed: "一键修复失败",
         int_sys_title: "Claude Code CLI",
-        int_sys_desc: "一键把 ocgt 代理变量写入用户环境，之后 Claude Code CLI 会自动走当前 Profile 的本地代理。",
         btn_sys_install: "一键激活",
-
         btn_sys_remove: "移除配置",
+        int_sys_desc: "将代理地址自动写入 ~/.claude/settings.json，Claude Code 在任意终端均可直接使用代理，移除时自动恢复原配置。",
+        toast_sys_installed: "全局 JSON 配置已写入！Claude Code 现在将通过代理运行。",
+        toast_sys_removed: "已移除代理配置并还原。 (如果有的话)",
         lbl_temp_import: "临时导入 (当前窗口生效):",
         int_vscode_title: "VS Code Claude Code 插件",
         int_vscode_desc: "自动向 VS Code 用户配置注入 ocgt 代理变量。插件或其启动的 Claude Code 进程会继承这些变量，新建会话即可走本地代理。",
@@ -367,19 +425,21 @@ const i18n = {
 
         btn_clear_desktop_full: "移除配置",
         lbl_desktop_help_title: "Claude Code settings",
-        lbl_desktop_help_desc: "这里不是 Claude Desktop 登录接管，只写入 Claude Code 读取的 settings.json 环境块。",
+        lbl_desktop_help_desc: "这里只写入 Claude Code 读取的 settings.json 环境块，不修改 Claude Desktop 登录状态。",
         int_claude_desktop_title: "Claude Desktop App",
         int_claude_desktop_desc: "按 cc-switch 的 3P profile 方式写入 Claude Desktop 配置，重启 Claude Desktop 后通过 ocgt 本地路由转发。",
-        btn_setup_claude_desktop_app: "持久激活",
+        btn_setup_claude_desktop_app: "一键激活",
         btn_clear_claude_desktop_app: "移除配置",
         toast_claude_desktop_app_setup_success: "Claude Desktop App 3P 配置已写入，重启 Claude Desktop 后生效。",
         toast_claude_desktop_app_cleared: "Claude Desktop App 3P 配置已移除。",
         toast_vscode_installed: "VS Code Claude Code 插件配置已注入！",
         toast_vscode_removed: "VS Code Claude Code 插件配置已清除！",
-        toast_sys_installed: "Claude Code CLI 环境变量已注入，重新启动 CLI 即可生效！",
-        toast_sys_removed: "Claude Code CLI 环境变量已清除！",
         toast_vscode_failed: "配置 VS Code 失败",
+        loading_title: "正在连接本地代理",
         loading_init: "正在初始化代理服务...",
+        loading_unavailable_title: "代理暂时不可用",
+        loading_unavailable_desc: "本地代理未响应。请检查监听地址、端口占用或配置后重试。",
+        proxy_health_timeout: "代理端口未响应 /healthz",
         btn_retry_connection: "重试连接",
         token_total_label: "总计: {{count}} tokens"
     },
@@ -408,7 +468,7 @@ const i18n = {
         title_terminal: "Quick Connect",
 
         subtitle_terminal: "One-click proxy setup for terminals, editors, and Claude clients",
-        hint_desktop_config_short: "One-click write ocgt proxy config into Claude Code Desktop",
+        hint_desktop_config_short: "One-click write ocgt proxy config into Claude Code settings.json",
         title_history: "Traffic Monitoring Radar",
         subtitle_history: "Real-time capture of API logs and metrics received from Claude Code",
         lbl_listen: "Listen Address",
@@ -417,13 +477,21 @@ const i18n = {
         lbl_api_key: "API Key Status",
         lbl_profile: "Active Profile",
         lbl_model: "Default Model",
+        dash_integrations: "Client Integrations",
+        dash_cli: "CLI",
+        dash_vscode: "VS Code",
+        dash_claude_desktop: "Claude Desktop",
         lbl_config_path: "Local Config Path",
-        lbl_desktop_config: "Claude Code Desktop Config",
+        lbl_desktop_config: "Claude Code settings Config",
         lbl_last_updated: "Updated just now",
         btn_open_folder: "Open Directory",
         sett_title: "Easy Configuration Center",
         sett_section_api: "API Configuration",
+        sett_section_api_desc: "Profile, API key, default model, and timeout",
+        sett_section_network: "Network & Rate Limiting",
+        sett_section_network_desc: "Upstream API URL, listen address, and request limits",
         sett_section_model: "Model Settings",
+        sett_section_model_desc: "Reasoning intensity and Claude model alias mapping",
         sett_section_prefs: "Application Preferences",
         sett_profile: "Current Profile",
         sett_default_model: "Global Default Model",
@@ -431,12 +499,13 @@ const i18n = {
         placeholder_api_key: "Enter your OpenCode sk-... API Key",
         sett_upstream: "Upstream API URL",
         sett_timeout: "Request Timeout (Seconds, 1-3600)",
+        sett_rate_minute: "Requests Per Minute",
         sett_thinking: "Reasoning Intensity (Supported Models)",
-        opt_thinking_256: "Fast · Low Latency",
-        opt_thinking_512: "Slow · Powerful",
-        opt_thinking_1024: "Deep · Complex Tasks",
-        opt_thinking_2048: "Geek · Heavy Refactoring",
-        opt_thinking_off: "Disable Reasoning",
+        opt_thinking_256: "Low",
+        opt_thinking_512: "Medium",
+        opt_thinking_1024: "High",
+        opt_thinking_2048: "Max",
+        opt_thinking_off: "Off",
         sett_mapping_title: "Model Alias Mapping",
 
         sett_mapping_sonnet: "Sonnet",
@@ -448,13 +517,27 @@ const i18n = {
         sett_rate_limit: "Requests Per Second",
         sett_rate_burst: "Burst Capacity",
         sett_claude_env_template: "Claude Code Env Template",
-        opt_custom: "-- Custom Model --",
+        sett_advanced_summary: "Listen, limits, environment variables, and JSON",
+        sett_log_title: "Log Storage",
+        sett_log_desc: "Log directory and retention policy",
+        sett_env_title: "Advanced Environment",
+        sett_env_desc: "Claude Code environment toggles and custom JSON",
+        env_disable_nonessential: "Disable nonessential traffic",
+        env_enable_tool_search: "Tool Search",
+        env_disable_attribution: "Disable Attribution",
+        env_disable_thinking: "Disable Thinking",
+        env_max_output_tokens: "Max Output Tokens",
+        env_max_mcp_tokens: "Max MCP Tokens",
+        env_api_timeout: "API Timeout (ms)",
+        env_mcp_timeout: "MCP Timeout (ms)",
+        btn_edit_settings_json: "Edit settings.json",
+        opt_custom: "Custom model...",
         btn_save_config: "Save Configuration",
         btn_repair_env: "One-click Repair Claude Code System Env",
         btn_reset_defaults: "Reset to defaults",
         btn_about_app: "About ocgt Dashboard",
         btn_clear_history: "Clear history",
-        hint_save: "Saving updates proxy configuration and refreshes only already activated targets; inactive CLI, VS Code, or Claude Desktop targets are not written.",
+        hint_save: "Saving updates proxy configuration and refreshes only already configured targets; unconfigured CLI, VS Code, or Claude Desktop targets are not written.",
         hint_tip: "💡 Tip: Just select and launch any terminal shell of your choice. No need to repeatedly configure all shells.",
         hint_changes_detected: "Unsaved changes detected",
         btn_cancel_changes: "Cancel Changes",
@@ -462,9 +545,8 @@ const i18n = {
         sync_listen: "Listen",
         sync_cli: "CLI",
         sync_vscode: "VS Code",
-        sync_claude: "Claude Code",
-        sync_active: "",
-        sync_inactive: "",
+        sync_claude: "Claude Desktop",
+        sync_active: "Configured",
         token_log_on: "Log on",
         token_log_off: "Log off",
         term_title: "Spawn Pre-configured Console",
@@ -472,10 +554,10 @@ const i18n = {
         btn_launch_term: "Launch Pre-configured Terminal",
         btn_persistent_env: "Repair System Env (Persistent for future shells)",
 
-        btn_setup_desktop: "Setup Claude Code Desktop",
+        btn_setup_desktop: "Setup Claude Code settings",
 
         status_configuring: "Configuring...",
-        btn_setup_desktop_configured: "✓ Desktop Configured | Reconfigure",
+        btn_setup_desktop_configured: "✓ Configured | Reconfigure",
         btn_clear_desktop_config: "Clear Config",
         status_clearing: "Clearing...",
 
@@ -507,6 +589,12 @@ const i18n = {
         traf_input_output: "input + output",
 
         traf_rpm_hint: "RPM / Quota",
+        traf_filter_source: "Source",
+        traf_filter_all: "All sources",
+        traf_filter_cli: "CLI",
+        traf_filter_vscode: "VS Code",
+        traf_filter_desktop: "Claude Desktop",
+        traf_filter_count: "Showing {{shown}} / {{total}}",
 
         th_tokens: "Tokens",
         th_client: "Source",
@@ -520,6 +608,7 @@ const i18n = {
         th_duration: "Duration",
         th_error: "Error Details",
         traf_empty: "No traffic captured yet. Launch a terminal or make API requests through the proxy...",
+        traf_empty_filtered: "No traffic records match this source filter. Switch to All sources to see other requests.",
         traf_listening: "Live Traffic Radar Active & Listening",
         opt_model_kimi_26: "kimi-k2.6",
         opt_model_qwen_36: "qwen3.6-plus",
@@ -532,12 +621,12 @@ const i18n = {
         opt_mapping_opus_default: "kimi-k2.6 (recommended)",
         sett_close_behavior: "Close Window Behavior",
         opt_close_prompt: "Prompt Every Time",
-        opt_close_minimize: "Minimize to System Tray",
-        opt_close_exit: "Exit Application",
+        opt_close_minimize: "Hide to tray; proxy keeps running",
+        opt_close_exit: "Exit app; stop proxy",
         close_dialog_title: "Close Window",
-        close_dialog_msg: "How would you like to close the app?",
-        close_dialog_exit: "Exit Application",
-        close_dialog_minimize: "Minimize to System Tray",
+        close_dialog_msg: "Hiding to tray keeps proxy requests running. Exiting stops the local proxy.",
+        close_dialog_exit: "Exit and Stop Proxy",
+        close_dialog_minimize: "Hide to Tray and Keep Proxy",
         close_dialog_cancel: "Cancel",
         about_desc: "Premium native companion for Claude Code & OpenCode Go",
         about_author: "Author",
@@ -546,11 +635,13 @@ const i18n = {
         about_close: "Close",
         err_api_key_required: "API Key is required",
         err_upstream_url: "Enter a valid http(s) URL",
+        err_listen_addr: "Enter a valid listen address, for example 127.0.0.1:8787 or :8787",
         err_timeout_range: "Timeout must be 1-3600 seconds",
         err_rate_limit_range: "Range must be 1-10000",
         err_rate_burst_range: "Range must be 1-100000",
+        err_rate_minute_range: "Range must be 0-100000; 0 means unlimited",
         err_claude_env_json: "Must be a JSON object with string keys and values",
-        toast_saved: "Configuration saved; activated targets refreshed.",
+        toast_saved: "Configuration saved; configured targets refreshed.",
         toast_save_failed: "Save failed",
         toast_env_repaired: "Environment variables written to system",
         toast_env_repair_failed: "Environment repair failed",
@@ -560,13 +651,21 @@ const i18n = {
         toast_launch_failed: "Terminal launch failed",
         toast_launch_success: "Terminal launched successfully",
 
-        toast_desktop_setup_success: "✓ Claude Code Desktop configured. Restart to apply. Verify: send a message and check ocgt logs for request records.",
+        toast_desktop_setup_success: "✓ Claude Code settings configured. Reopen Claude Code to apply. Verify: send a message and check ocgt logs for request records.",
         toast_desktop_verify_hint: "Verify: send a message and check ocgt logs for request records.",
         toast_desktop_cleared: "Desktop configuration cleared",
 
         toast_history_cleared: "History cleared",
         toast_validation_error: "Please check form errors",
         toast_custom_model_prompt: "Enter custom model name",
+        custom_model_title: "Add Custom Model",
+        custom_model_desc: "Enter a model ID supported by your upstream provider. It will be saved to the current profile.",
+        custom_model_label: "Model name",
+        custom_model_placeholder: "e.g. qwen3.6-plus or vendor/model-name",
+        custom_model_cancel: "Cancel",
+        custom_model_confirm: "Use Model",
+        custom_model_required: "Model name is required",
+        custom_model_too_long: "Model name must be 128 characters or less",
         toast_reset_confirm: "Reset all settings to defaults?",
         toast_reset_done: "Settings reset to defaults",
         toast_confirm: "Confirm Reset",
@@ -603,6 +702,8 @@ const i18n = {
         pref_behavior: "Behavior",
 
         pref_behavior_desc: "Window close and system interaction",
+        pref_logs: "Logs",
+        pref_logs_desc: "Log directory and retention policy",
         pref_log_save: "GUI Log Saving",
         pref_log_dir: "Log Directory",
         pref_log_retention: "Retention Days",
@@ -610,20 +711,34 @@ const i18n = {
         btn_save_log_prefs: "Save Log Settings",
         toast_log_prefs_saved: "Log settings saved",
         toast_log_prefs_failed: "Failed to save log settings",
+        raw_json_title: "Edit Claude Code settings.json",
+        raw_json_desc: "Advanced entry: edits only ~/.claude/settings.json. Confirm the JSON is valid before saving.",
+        raw_json_cancel: "Cancel",
+        raw_json_save: "Save settings.json",
+        raw_json_loading: "Loading...",
+        raw_json_load_failed: "Failed to load settings.json: ",
+        raw_json_save_failed: "Failed to parse or save settings.json: ",
+        raw_json_saved: "Claude Code settings.json saved",
         pref_danger: "Reset & About",
         pref_danger_desc: "Reset defaults or view version info",
-        badge_not_configured: "Inactive",
-        badge_active: "Active ✓",
-        badge_inactive: "Inactive",
+        badge_not_configured: "Not configured",
+        badge_active: "Configured ✓",
+        badge_inactive: "Not configured",
         badge_recommended: "Recommended",
+        integration_reapply_hint: "Configured; click again to reapply the current profile proxy config.",
         int_quick_title: "Quick Start: Temporary Terminal",
         int_quick_desc: "Temporarily injects proxy variables only into the newly opened terminal window. It does not write persistent config, and you can open multiple windows.",
         btn_launch_temp_term: "Open Temporary Terminal",
+        repair_title: "One-click Repair",
+        repair_desc: "Repairs Claude Code settings, base environment variables, and any already configured VS Code / Claude Desktop integrations.",
+        btn_repair_all: "Repair All",
+        toast_repair_all_success: "Base configuration and configured integrations repaired",
+        toast_repair_all_failed: "Repair failed",
         int_sys_title: "Claude Code CLI",
-        int_sys_desc: "Persist ocgt proxy variables into the user environment so Claude Code CLI automatically routes through the active local proxy profile.",
+        int_sys_desc: "Writes proxy address to ~/.claude/settings.json. Claude Code will route through proxy in any terminal, automatically restoring on remove.",
         btn_sys_install: "Activate",
 
-        btn_sys_remove: "Remove",
+        btn_sys_remove: "Remove Config",
         lbl_temp_import: "Temp Import (Current window only):",
         int_vscode_title: "VS Code Claude Code Extension",
         int_vscode_desc: "Inject ocgt proxy variables into VS Code user settings. The Claude Code extension, or the Claude Code process it launches, can inherit the local proxy environment.",
@@ -637,19 +752,23 @@ const i18n = {
 
         btn_clear_desktop_full: "Remove",
         lbl_desktop_help_title: "Claude Code settings",
-        lbl_desktop_help_desc: "This is not Claude Desktop sign-in takeover; it writes only the settings.json env block read by Claude Code.",
+        lbl_desktop_help_desc: "Writes only the settings.json env block read by Claude Code; Claude Desktop sign-in is unchanged.",
         int_claude_desktop_title: "Claude Desktop App",
         int_claude_desktop_desc: "Writes Claude Desktop config using the same 3P profile approach as cc-switch. Restart Claude Desktop to route requests through ocgt.",
-        btn_setup_claude_desktop_app: "Persistently Activate",
+        btn_setup_claude_desktop_app: "Activate",
         btn_clear_claude_desktop_app: "Remove Config",
         toast_claude_desktop_app_setup_success: "Claude Desktop App 3P config written. Restart Claude Desktop to apply.",
         toast_claude_desktop_app_cleared: "Claude Desktop App 3P config removed.",
         toast_vscode_installed: "VS Code Claude Code extension configuration injected!",
         toast_vscode_removed: "VS Code Claude Code extension configuration cleared!",
-        toast_sys_installed: "Claude Code CLI environment variables injected. Restart the CLI to apply!",
-        toast_sys_removed: "Claude Code CLI environment variables cleared!",
+        toast_sys_installed: "Global JSON configured! Claude Code will now route through proxy.",
+        toast_sys_removed: "Proxy configuration restored from ~/.claude/settings.json.",
         toast_vscode_failed: "Failed to configure VS Code",
+        loading_title: "Connecting local proxy",
         loading_init: "Initializing proxy service...",
+        loading_unavailable_title: "Proxy unavailable",
+        loading_unavailable_desc: "The local proxy did not respond. Check the listen address, port usage, or configuration, then retry.",
+        proxy_health_timeout: "Proxy port did not respond to /healthz",
         btn_retry_connection: "Retry Connection",
         token_total_label: "Total: {{count}} tokens"
     }
@@ -662,7 +781,7 @@ const i18n = {
 /** Get the current language dictionary */
 function t(key) {
     const dict = i18n[currentLang];
-    return (dict && dict[key]) || key;
+    return dict && Object.prototype.hasOwnProperty.call(dict, key) ? dict[key] : key;
 }
 
 /** Safely access the Wails App binding. Returns null when not in desktop mode. */
@@ -766,10 +885,21 @@ function cacheDom() {
     dom.inputApiKey = document.getElementById('api-key-input');
     dom.inputUpstream = document.getElementById('upstream-input');
     dom.inputTimeout = document.getElementById('timeout-input');
+    dom.inputListen = document.getElementById('listen-input');
+    dom.inputUpstream = document.getElementById('upstream-input');
     dom.inputThinkingBudget = document.getElementById('thinking-budget-input');
     dom.inputRateLimit = document.getElementById('rate-limit-input');
     dom.inputRateBurst = document.getElementById('rate-burst-input');
+    dom.inputRateMinute = document.getElementById('rate-minute-input');
     dom.inputClaudeEnvTemplate = document.getElementById('claude-env-template-input');
+    dom.envDisableNonEssential = document.getElementById('env-disable-nonessential');
+    dom.envEnableToolSearch = document.getElementById('env-enable-tool-search');
+    dom.envDisableAttribution = document.getElementById('env-disable-attribution');
+    dom.envDisableThinking = document.getElementById('env-disable-thinking');
+    dom.envMaxOutputTokens = document.getElementById('env-max-output-tokens');
+    dom.envMaxMcpTokens = document.getElementById('env-max-mcp-tokens');
+    dom.envApiTimeout = document.getElementById('env-api-timeout');
+    dom.envMcpTimeout = document.getElementById('env-mcp-timeout');
     dom.inputDefaultModel = document.getElementById('default-model-input');
     dom.inputSonnetMapping = document.getElementById('mapping-sonnet-input');
     dom.inputHaikuMapping = document.getElementById('mapping-haiku-input');
@@ -783,6 +913,7 @@ function cacheDom() {
     dom.btnSaveAllConfig = document.getElementById('save-all-config-btn');
     dom.btnCancelConfig = document.getElementById('cancel-config-btn');
     dom.btnInstallEnv = document.getElementById('install-env-btn');
+    dom.btnRepairAll = document.getElementById('repair-all-btn');
 
     // System Environment Card
     dom.btnSysEnvInstall = document.getElementById('sys-env-install-btn');
@@ -825,6 +956,8 @@ function cacheDom() {
     // History
     dom.tbodyHistory = document.getElementById('history-tbody');
     dom.clearHistoryBtn = document.getElementById('clear-history-btn');
+    dom.sourceFilterSelect = document.getElementById('sourceFilterSelect');
+    dom.historyFilterCount = document.getElementById('history-filter-count');
     dom.tokenProfileLabel = document.getElementById('token-profile-label');
     dom.tokenLogLabel = document.getElementById('token-log-label');
 
@@ -845,6 +978,9 @@ function cacheDom() {
 
     // Loading overlay
     dom.loadingOverlay = document.getElementById('loadingOverlay');
+    dom.loadingSpinner = document.getElementById('loadingSpinner');
+    dom.loadingTitle = document.getElementById('loadingTitle');
+    dom.loadingText = document.getElementById('loadingText');
     dom.loadingRetryBtn = document.getElementById('loadingRetryBtn');
 
     // Modals
@@ -854,6 +990,12 @@ function cacheDom() {
     dom.closeDialogCancel = document.getElementById('closeDialogCancel');
     dom.aboutDialogOverlay = document.getElementById('aboutDialogOverlay');
     dom.aboutDialogClose = document.getElementById('aboutDialogClose');
+    dom.customModelModalOverlay = document.getElementById('customModelModalOverlay');
+    dom.customModelInput = document.getElementById('customModelInput');
+    dom.customModelError = document.getElementById('customModelError');
+    dom.customModelClose = document.getElementById('customModelClose');
+    dom.customModelCancelBtn = document.getElementById('customModelCancelBtn');
+    dom.customModelConfirmBtn = document.getElementById('customModelConfirmBtn');
 }
 // ══════════════════════════════════════════════════════
 
@@ -959,6 +1101,76 @@ function hideModal(overlayEl) {
     overlayEl.classList.remove('active');
     overlayEl.setAttribute('aria-hidden', 'true');
 }
+
+function setCustomModelError(message) {
+    if (!dom.customModelError) return;
+    dom.customModelError.textContent = message || '';
+    dom.customModelError.hidden = !message;
+}
+
+function requestCustomModelName() {
+    if (!dom.customModelModalOverlay || !dom.customModelInput) {
+        toastI18n('toast_custom_model_prompt', 'warning');
+        return Promise.resolve('');
+    }
+    setCustomModelError('');
+    dom.customModelInput.value = '';
+    showModal(dom.customModelModalOverlay);
+    window.setTimeout(() => dom.customModelInput.focus(), 40);
+
+    return new Promise(resolve => {
+        let settled = false;
+        const cleanup = () => {
+            if (dom.customModelConfirmBtn) dom.customModelConfirmBtn.removeEventListener('click', confirm);
+            if (dom.customModelCancelBtn) dom.customModelCancelBtn.removeEventListener('click', cancel);
+            if (dom.customModelClose) dom.customModelClose.removeEventListener('click', cancel);
+            if (dom.customModelModalOverlay) dom.customModelModalOverlay.removeEventListener('click', onOverlayClick);
+            if (dom.customModelInput) dom.customModelInput.removeEventListener('keydown', onKeydown);
+            if (activeCustomModelCancel === cancel) activeCustomModelCancel = null;
+        };
+        const finish = value => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            hideModal(dom.customModelModalOverlay);
+            resolve(value);
+        };
+        const confirm = () => {
+            const value = dom.customModelInput.value.trim();
+            if (!value) {
+                setCustomModelError(t('custom_model_required'));
+                dom.customModelInput.focus();
+                return;
+            }
+            if (value.length > 128) {
+                setCustomModelError(t('custom_model_too_long'));
+                dom.customModelInput.focus();
+                return;
+            }
+            finish(value);
+        };
+        const cancel = () => finish('');
+        activeCustomModelCancel = cancel;
+        const onOverlayClick = (e) => {
+            if (e.target === dom.customModelModalOverlay) cancel();
+        };
+        const onKeydown = (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                confirm();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                cancel();
+            }
+        };
+
+        if (dom.customModelConfirmBtn) dom.customModelConfirmBtn.addEventListener('click', confirm);
+        if (dom.customModelCancelBtn) dom.customModelCancelBtn.addEventListener('click', cancel);
+        if (dom.customModelClose) dom.customModelClose.addEventListener('click', cancel);
+        dom.customModelModalOverlay.addEventListener('click', onOverlayClick);
+        dom.customModelInput.addEventListener('keydown', onKeydown);
+    });
+}
 // ══════════════════════════════════════════════════════
 
 function setProxyConnectionState(state, detail) {
@@ -984,18 +1196,34 @@ function showDashboardContent() {
     isLoadingDashboard = false;
 }
 
-function showLoadingOverlay(show, showRetry) {
-    const overlay = document.getElementById('loadingOverlay');
-    const retryBtn = document.getElementById('loadingRetryBtn');
+function showLoadingOverlay(show, showRetry, detail) {
+    const overlay = dom.loadingOverlay || document.getElementById('loadingOverlay');
+    const retryBtn = dom.loadingRetryBtn || document.getElementById('loadingRetryBtn');
+    const titleEl = dom.loadingTitle || document.getElementById('loadingTitle');
+    const textEl = dom.loadingText || document.getElementById('loadingText');
+    const spinner = dom.loadingSpinner || document.getElementById('loadingSpinner');
     if (!overlay) return;
-    if (show) {
+    const retryMode = Boolean(showRetry);
+    const visible = Boolean(show) || retryMode;
+
+    if (titleEl) {
+        titleEl.textContent = retryMode ? t('loading_unavailable_title') : t('loading_title');
+    }
+    if (textEl) {
+        textEl.textContent = retryMode ? (detail || t('loading_unavailable_desc')) : t('loading_init');
+    }
+    if (spinner) {
+        spinner.classList.toggle('hidden', retryMode);
+    }
+    if (retryBtn) {
+        retryBtn.classList.toggle('hidden', !retryMode);
+        retryBtn.disabled = false;
+    }
+
+    if (visible) {
         overlay.classList.remove('hidden');
-        if (retryBtn) retryBtn.classList.add('hidden');
     } else {
         overlay.classList.add('hidden');
-        if (retryBtn && showRetry) {
-            retryBtn.classList.remove('hidden');
-        }
     }
 }
 
@@ -1080,7 +1308,7 @@ async function getProxyStartupDetail() {
             return diagnostics.last_error;
         }
         if (diagnostics.healthy === false) {
-            return '代理端口未响应 /healthz';
+            return t('proxy_health_timeout');
         }
     } catch (err) {
         console.error('Proxy diagnostics failed:', err);
@@ -1114,7 +1342,7 @@ function populateModelSelects() {
 
             const custom = document.createElement('option');
             custom.value = 'custom';
-            custom.textContent = '-- Custom Model --';
+            custom.textContent = t('opt_custom');
             sel.appendChild(custom);
         } else {
             // Mapping selector — only high-tier models + custom
@@ -1143,7 +1371,7 @@ function populateModelSelects() {
 
             const custom = document.createElement('option');
             custom.value = 'custom';
-            custom.textContent = '-- Custom Model --';
+            custom.textContent = t('opt_custom');
             sel.appendChild(custom);
         }
         // Restore previous value
@@ -1268,7 +1496,7 @@ async function initializeApp() {
 
         showDashboardContent();
 
-        showLoadingOverlay(false, true);
+        showLoadingOverlay(false, true, detail || t('loading_unavailable_desc'));
 
         isInitializing = false;
 
@@ -1328,6 +1556,7 @@ function setThinkingBudgetValue(value) {
     if (!dom.inputThinkingBudget) return;
     if (ALLOWED_THINKING_BUDGETS.includes(value)) {
         dom.inputThinkingBudget.value = value;
+        syncThinkingSegmentControl(value);
         return;
     }
     let opt = Array.from(dom.inputThinkingBudget.options).find(o => o.value === value);
@@ -1338,6 +1567,15 @@ function setThinkingBudgetValue(value) {
         dom.inputThinkingBudget.insertBefore(opt, dom.inputThinkingBudget.lastElementChild);
     }
     dom.inputThinkingBudget.value = value;
+    syncThinkingSegmentControl(value);
+}
+
+function syncThinkingSegmentControl(value) {
+    const segControl = document.getElementById('thinking-seg-control');
+    if (!segControl) return;
+    segControl.querySelectorAll('.sett-seg-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.val === value);
+    });
 }
 
 function orderedJSONString(value) {
@@ -1375,7 +1613,7 @@ function applyDynamicClaudeEnv(env, client) {
     const sonnet = dom.inputSonnetMapping && dom.inputSonnetMapping.value ? dom.inputSonnetMapping.value : '';
     const haiku = dom.inputHaikuMapping && dom.inputHaikuMapping.value ? dom.inputHaikuMapping.value : '';
     const opus = dom.inputOpusMapping && dom.inputOpusMapping.value ? dom.inputOpusMapping.value : '';
-    const thinkingBudget = dom.inputThinkingBudget && dom.inputThinkingBudget.value ? Number(dom.inputThinkingBudget.value) : 512;
+    const thinkingBudget = dom.inputThinkingBudget && dom.inputThinkingBudget.value ? Number(dom.inputThinkingBudget.value) : 2048;
 
     if (opus) env.ANTHROPIC_DEFAULT_OPUS_MODEL = opus;
     if (sonnet) env.ANTHROPIC_DEFAULT_SONNET_MODEL = sonnet;
@@ -1384,6 +1622,34 @@ function applyDynamicClaudeEnv(env, client) {
         env.ANTHROPIC_SMALL_FAST_MODEL = haiku;
         env.CLAUDE_CODE_SUBAGENT_MODEL = haiku;
     }
+    
+    // Write dynamic advanced values back to the env
+    if (dom.envDisableNonEssential) {
+        env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = dom.envDisableNonEssential.checked ? "1" : "0";
+        env.DISABLE_NON_ESSENTIAL_MODEL_CALLS = dom.envDisableNonEssential.checked ? "1" : "0";
+    }
+    if (dom.envEnableToolSearch) env.ENABLE_TOOL_SEARCH = dom.envEnableToolSearch.checked ? "true" : "false";
+    if (dom.envDisableAttribution) env.CLAUDE_CODE_ATTRIBUTION_HEADER = dom.envDisableAttribution.checked ? "0" : "1";
+    if (dom.envDisableThinking && dom.envDisableThinking.checked) {
+        env.CLAUDE_CODE_DISABLE_THINKING = "1";
+        env.MAX_THINKING_TOKENS = "0";
+    } else {
+        if (thinkingBudget < 0) {
+            env.MAX_THINKING_TOKENS = '0';
+            env.CLAUDE_CODE_DISABLE_THINKING = '1';
+        } else {
+            env.MAX_THINKING_TOKENS = String(thinkingBudget || 2048);
+            delete env.CLAUDE_CODE_DISABLE_THINKING;
+        }
+    }
+    if (dom.envMaxOutputTokens && dom.envMaxOutputTokens.value) env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = dom.envMaxOutputTokens.value;
+    if (dom.envMaxMcpTokens && dom.envMaxMcpTokens.value) env.MAX_MCP_OUTPUT_TOKENS = dom.envMaxMcpTokens.value;
+    if (dom.envApiTimeout && dom.envApiTimeout.value) env.API_TIMEOUT_MS = dom.envApiTimeout.value;
+    if (dom.envMcpTimeout && dom.envMcpTimeout.value) {
+        env.MCP_TIMEOUT = dom.envMcpTimeout.value;
+        env.MCP_TOOL_TIMEOUT = dom.envMcpTimeout.value;
+    }
+
     env.ANTHROPIC_BASE_URL = `http://${listen}`;
     env.ANTHROPIC_CUSTOM_HEADERS = `X-Ocgt-Profile: ${profile}, X-Ocgt-Client: ${client}`;
     env.OCGT_PROFILE = profile;
@@ -1393,13 +1659,7 @@ function applyDynamicClaudeEnv(env, client) {
     } else {
         env.ANTHROPIC_API_KEY = 'ocgt-local-proxy';
     }
-    if (thinkingBudget < 0) {
-        env.MAX_THINKING_TOKENS = '0';
-        env.CLAUDE_CODE_DISABLE_THINKING = '1';
-    } else {
-        env.MAX_THINKING_TOKENS = String(thinkingBudget || 512);
-        delete env.CLAUDE_CODE_DISABLE_THINKING;
-    }
+    
     return env;
 }
 
@@ -1434,6 +1694,9 @@ async function loadStatus() {
         if (dom.inputRateBurst && !document.activeElement.isSameNode(dom.inputRateBurst)) {
             dom.inputRateBurst.value = systemStatus.rate_limit_burst || '';
         }
+        if (dom.inputRateMinute && !document.activeElement.isSameNode(dom.inputRateMinute)) {
+            dom.inputRateMinute.value = systemStatus.rate_limit_per_minute || '';
+        }
         if (dom.inputClaudeEnvTemplate && !document.activeElement.isSameNode(dom.inputClaudeEnvTemplate)) {
             const envTemplate = { ...(systemStatus.claude_env || {}) };
             dom.inputClaudeEnvTemplate.value = orderedJSONString(applyDynamicClaudeEnv(envTemplate, 'claude-code-cli'));
@@ -1462,11 +1725,30 @@ async function loadStatus() {
             if (dom.inputTimeout && !document.activeElement.isSameNode(dom.inputTimeout)) {
                 dom.inputTimeout.value = seconds.toString();
             }
+            if (dom.inputListen && !document.activeElement.isSameNode(dom.inputListen)) {
+                dom.inputListen.value = systemStatus.listen || '';
+            }
+            if (dom.inputUpstream && !document.activeElement.isSameNode(dom.inputUpstream)) {
+                dom.inputUpstream.value = systemStatus.upstream || '';
+            }
+        }
+
+        // Claude Env Toggles
+        if (systemStatus && systemStatus.claude_env) {
+            const env = systemStatus.claude_env;
+            if (dom.envDisableNonEssential && !document.activeElement.isSameNode(dom.envDisableNonEssential)) dom.envDisableNonEssential.checked = env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !== "0";
+            if (dom.envEnableToolSearch && !document.activeElement.isSameNode(dom.envEnableToolSearch)) dom.envEnableToolSearch.checked = env.ENABLE_TOOL_SEARCH !== "false";
+            if (dom.envDisableAttribution && !document.activeElement.isSameNode(dom.envDisableAttribution)) dom.envDisableAttribution.checked = env.CLAUDE_CODE_ATTRIBUTION_HEADER === "0";
+            if (dom.envDisableThinking && !document.activeElement.isSameNode(dom.envDisableThinking)) dom.envDisableThinking.checked = env.CLAUDE_CODE_DISABLE_THINKING === "1";
+            if (dom.envMaxOutputTokens && !document.activeElement.isSameNode(dom.envMaxOutputTokens)) dom.envMaxOutputTokens.value = env.CLAUDE_CODE_MAX_OUTPUT_TOKENS || '131072';
+            if (dom.envMaxMcpTokens && !document.activeElement.isSameNode(dom.envMaxMcpTokens)) dom.envMaxMcpTokens.value = env.MAX_MCP_OUTPUT_TOKENS || '200000';
+            if (dom.envApiTimeout && !document.activeElement.isSameNode(dom.envApiTimeout)) dom.envApiTimeout.value = env.API_TIMEOUT_MS || '600000';
+            if (dom.envMcpTimeout && !document.activeElement.isSameNode(dom.envMcpTimeout)) dom.envMcpTimeout.value = env.MCP_TIMEOUT || '600000';
         }
 
         // Thinking budget
         if (dom.inputThinkingBudget) {
-            const budget = Number(systemStatus.max_thinking_budget_tokens ?? 512);
+            const budget = Number(systemStatus.max_thinking_budget_tokens ?? 2048);
             if (!document.activeElement.isSameNode(dom.inputThinkingBudget)) {
                 setThinkingBudgetValue(budget.toString());
             }
@@ -1508,6 +1790,25 @@ async function loadStatus() {
 
 }
 
+let currentHistoryData = [];
+
+async function loadHistory() {
+    try {
+        const resp = await apiFetch('/ocgt/api/history');
+        if (!resp.ok) throw new Error('Failed to load history');
+        const data = await resp.json();
+        currentHistoryData = data;
+        renderHistory(data);
+    } catch (err) {
+        console.error('Error loading history:', err);
+        if (!(await isProxyHealthy())) {
+            proxyReady = false;
+            setProxyConnectionState('offline');
+        }
+        return false;
+    }
+}
+
 async function loadProfiles() {
     try {
         const resp = await apiFetch('/ocgt/api/profiles');
@@ -1539,29 +1840,6 @@ async function loadProfiles() {
     } catch (err) {
 
         console.error('Error loading profiles:', err);
-
-        if (!(await isProxyHealthy())) {
-            proxyReady = false;
-            setProxyConnectionState('offline');
-        }
-
-        return false;
-
-    }
-
-}
-
-async function loadHistory() {
-    try {
-        const resp = await apiFetch('/ocgt/api/history');
-        if (!resp.ok) throw new Error('Failed');
-        renderHistoryTable(await resp.json());
-
-        return true;
-
-    } catch (err) {
-
-        console.error('Error loading history:', err);
 
         if (!(await isProxyHealthy())) {
             proxyReady = false;
@@ -1634,10 +1912,20 @@ function getSettingsSnapshot() {
         haiku: dom.inputHaikuMapping ? dom.inputHaikuMapping.value : '',
         opus: dom.inputOpusMapping ? dom.inputOpusMapping.value : '',
         timeout: dom.inputTimeout ? dom.inputTimeout.value : '',
+        listen: dom.inputListen ? dom.inputListen.value : '',
         thinkingBudget: dom.inputThinkingBudget ? dom.inputThinkingBudget.value : '',
         rateLimit: dom.inputRateLimit ? dom.inputRateLimit.value : '',
         rateBurst: dom.inputRateBurst ? dom.inputRateBurst.value : '',
+        rateMinute: dom.inputRateMinute ? dom.inputRateMinute.value : '',
         claudeEnvTemplate: dom.inputClaudeEnvTemplate ? dom.inputClaudeEnvTemplate.value : '',
+        envDisableNonEssential: dom.envDisableNonEssential ? dom.envDisableNonEssential.checked : true,
+        envEnableToolSearch: dom.envEnableToolSearch ? dom.envEnableToolSearch.checked : true,
+        envDisableAttribution: dom.envDisableAttribution ? dom.envDisableAttribution.checked : true,
+        envDisableThinking: dom.envDisableThinking ? dom.envDisableThinking.checked : false,
+        envMaxOutputTokens: dom.envMaxOutputTokens ? dom.envMaxOutputTokens.value : '',
+        envMaxMcpTokens: dom.envMaxMcpTokens ? dom.envMaxMcpTokens.value : '',
+        envApiTimeout: dom.envApiTimeout ? dom.envApiTimeout.value : '',
+        envMcpTimeout: dom.envMcpTimeout ? dom.envMcpTimeout.value : '',
         closeBehavior: dom.inputCloseBehavior ? dom.inputCloseBehavior.value : ''
     };
 }
@@ -1656,9 +1944,11 @@ function restoreSettingsFromSnapshot(snapshot) {
     if (dom.inputHaikuMapping) setSelectValue(dom.inputHaikuMapping, snapshot.haiku || '');
     if (dom.inputOpusMapping) setSelectValue(dom.inputOpusMapping, snapshot.opus || '');
     if (dom.inputTimeout) dom.inputTimeout.value = snapshot.timeout || '300';
-    if (dom.inputThinkingBudget) setThinkingBudgetValue(snapshot.thinkingBudget || '512');
+    if (dom.inputListen) dom.inputListen.value = snapshot.listen || '127.0.0.1:8787';
+    if (dom.inputThinkingBudget) setThinkingBudgetValue(snapshot.thinkingBudget || '2048');
     if (dom.inputRateLimit) dom.inputRateLimit.value = snapshot.rateLimit || '';
     if (dom.inputRateBurst) dom.inputRateBurst.value = snapshot.rateBurst || '';
+    if (dom.inputRateMinute) dom.inputRateMinute.value = snapshot.rateMinute || '';
     if (dom.inputClaudeEnvTemplate) dom.inputClaudeEnvTemplate.value = snapshot.claudeEnvTemplate || '{}';
     if (dom.inputCloseBehavior) dom.inputCloseBehavior.value = normalizeCloseBehavior(snapshot.closeBehavior);
     clearFieldErrors();
@@ -1667,13 +1957,27 @@ function restoreSettingsFromSnapshot(snapshot) {
 }
 
 function updateConfigSyncStrip() {
-    if (dom.syncProfileName) dom.syncProfileName.textContent = systemStatus && systemStatus.active_profile ? systemStatus.active_profile : '-';
-    if (dom.syncListenAddress) dom.syncListenAddress.textContent = systemStatus && systemStatus.listen ? systemStatus.listen : '-';
+    if (dom.syncProfileName) dom.syncProfileName.textContent = systemStatus && systemStatus.active_profile ? systemStatus.active_profile : '';
+    if (dom.syncListenAddress) dom.syncListenAddress.textContent = systemStatus && systemStatus.listen ? systemStatus.listen : '';
 }
 
-function setSyncState(textEl, dotEl, active) {
-    if (textEl) textEl.textContent = '';
-    if (dotEl) dotEl.classList.toggle('inactive', !active);
+function setSyncState(textEl, dotEl, active, label) {
+    if (textEl) {
+        textEl.textContent = '';
+        textEl.style.color = active ? 'var(--green)' : 'var(--text-2)';
+        const stateLabel = active ? t('sync_active') : '';
+        textEl.title = label && stateLabel ? `${label}: ${stateLabel}` : (label || '');
+    }
+    if (dotEl) {
+        dotEl.classList.toggle('inactive', !active);
+        if (active) {
+            dotEl.style.background = 'var(--green)';
+            dotEl.style.boxShadow = '0 0 6px var(--green)';
+        } else {
+            dotEl.style.background = '';
+            dotEl.style.boxShadow = '';
+        }
+    }
 }
 
 function updateTokenContext() {
@@ -1730,19 +2034,53 @@ function clearChangesDetected() {
 
 // Client integrations code renderers are handled dynamically inside integrations-grid section
 
-function renderHistoryTable(logs) {
+function formatTokens(num) {
+    if (typeof num === 'string') {
+        const parsed = Number(num);
+        if (!isNaN(parsed)) num = parsed;
+        else return num;
+    }
+    if (typeof num !== 'number') return '-';
+    if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+    if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+    return String(num);
+}
 
-    updateTrafficStats(logs);
+function historySourceMatches(entry, filter) {
+    if (filter === 'all') return true;
+    const src = String(entry.client || entry.client_source || '').toLowerCase();
+    if (filter === 'vscode') return src.includes('vs code') || src.includes('vscode');
+    if (filter === 'cli') return src.includes('cli');
+    if (filter === 'desktop') return src.includes('claude app') || src.includes('desktop') || src.includes('桌面');
+    return true;
+}
 
-    if (!logs || logs.length === 0) {
+function updateHistoryFilterCount(shown, total) {
+    if (!dom.historyFilterCount) return;
+    dom.historyFilterCount.textContent = t('traf_filter_count')
+        .replace('{{shown}}', String(shown))
+        .replace('{{total}}', String(total));
+}
 
-        dom.tbodyHistory.innerHTML = `<tr class="empty-row"><td colspan="9"><div class="empty-state"><div class="empty-state-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></div><span>${t('traf_empty')}</span></div></td></tr>`;
+function renderHistoryEmptyState(messageKey) {
+    const message = escapeHtml(t(messageKey));
+    dom.tbodyHistory.innerHTML = `<tr class="empty-row"><td colspan="9"><div class="empty-state"><div class="empty-state-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></div><span>${message}</span></div></td></tr>`;
+}
 
+function renderHistory(data) {
+    if (!dom.tbodyHistory) return;
+    const rows = Array.isArray(data) ? data : [];
+    updateTrafficStats(rows);
+    const sourceFilter = dom.sourceFilterSelect ? dom.sourceFilterSelect.value : 'all';
+    const filteredData = rows.filter(entry => historySourceMatches(entry, sourceFilter));
+    updateHistoryFilterCount(filteredData.length, rows.length);
+
+    if (!filteredData || filteredData.length === 0) {
+        renderHistoryEmptyState(rows.length > 0 ? 'traf_empty_filtered' : 'traf_empty');
         return;
-
     }
 
-    dom.tbodyHistory.innerHTML = logs.map(log => {
+    dom.tbodyHistory.innerHTML = filteredData.map(log => {
 
         const time = formatTime(new Date(log.time));
 
@@ -1766,7 +2104,7 @@ function renderHistoryTable(logs) {
 
             <td class="duration-cell">${escapeHtml(log.duration)}</td>
 
-            <td class="tokens-cell">${escapeHtml(String(tokens))}</td>
+            <td class="tokens-cell">${escapeHtml(formatTokens(tokens))}</td>
 
             <td class="error-cell" title="${escapeHtml(log.error || '')}">${escapeHtml(log.error || '-')}</td>
 
@@ -1978,12 +2316,22 @@ function setFieldError(fieldId, message) {
     const field = document.getElementById(fieldId);
     if (!field) return;
     field.classList.add('error');
+    const hiddenParent = field.closest('details:not([open])');
+    if (hiddenParent) hiddenParent.open = true;
     const errorText = field.querySelector('.field-error-text');
     if (errorText) errorText.textContent = message;
 }
 
 function clearFieldErrors() {
     document.querySelectorAll('.field.error').forEach(f => f.classList.remove('error'));
+}
+
+function isValidListenAddress(value) {
+    const trimmed = String(value || '').trim();
+    const match = trimmed.match(/^(?:\[[^\]]+\]|[^:\s]+)?:([0-9]{1,5})$/);
+    if (!match) return false;
+    const port = Number(match[1]);
+    return Number.isInteger(port) && port >= 1 && port <= 65535;
 }
 // ══════════════════════════════════════════════════════
 
@@ -2002,14 +2350,14 @@ function updateLanguageDOM() {
     // data-i18n elements
     document.querySelectorAll('[data-i18n]').forEach(el => {
         const key = el.dataset.i18n;
-        if (!dict[key]) return;
+        if (!Object.prototype.hasOwnProperty.call(dict, key)) return;
         const tag = el.tagName;
         if (['SPAN', 'BUTTON', 'H2', 'H3', 'H4', 'LABEL', 'P', 'TH', 'LI', 'OPTION'].includes(tag)) {
             const value = dict[key];
             // Use textContent for plain text; only allow specific safe HTML tags via DOM API
             const containsHTML = /<[a-z]/i.test(value);
             if (containsHTML) {
-                // Parse HTML safely: only allow <b>, <i>, <code>, <br>, <strong>, <em>
+                // Parse HTML safely: only allow <b>, <i>, <code>, <br>, strong>, <em>
                 el.textContent = '';
                 const temp = document.createElement('div');
                 temp.innerHTML = value;
@@ -2039,7 +2387,7 @@ function updateLanguageDOM() {
     // Placeholders
     document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
         const key = el.dataset.i18nPlaceholder;
-        if (dict[key]) el.setAttribute('placeholder', dict[key]);
+        if (Object.prototype.hasOwnProperty.call(dict, key)) el.setAttribute('placeholder', dict[key]);
     });
 
     // Footer
@@ -2128,15 +2476,68 @@ function setupNavigation() {
             }
         }
         if (e.key === 'Escape') {
+            if (activeCustomModelCancel) activeCustomModelCancel();
+            if (activeRawJsonClose) activeRawJsonClose();
             hideModal(dom.closeDialogOverlay);
             hideModal(dom.aboutDialogOverlay);
             closeSettingsPanel();
         }
     });
+
+    if (dom.btnNavHistory) {
+        dom.btnNavHistory.addEventListener('click', () => setActiveView('history'));
+    }
+    
+    const btnNavSyslog = document.getElementById('btn-nav-syslog');
+    const sysLogModalOverlay = document.getElementById('sysLogModalOverlay');
+    const btnRefreshSysLog = document.getElementById('btnRefreshSysLog');
+    const sysLogContent = document.getElementById('sysLogContent');
+    const sysLogModalClose = document.getElementById('sysLogModalClose');
+
+    const fetchSysLog = async () => {
+        if (!sysLogContent) return;
+        try {
+            sysLogContent.textContent = "Loading logs...";
+            const resp = await apiFetch('/ocgt/api/syslog');
+            if (!resp.ok) throw new Error("fetch error");
+            const data = await resp.json();
+            sysLogContent.textContent = data.log || "No logs available.";
+            sysLogContent.scrollTop = sysLogContent.scrollHeight; // auto scroll to bottom
+        } catch (e) {
+            sysLogContent.textContent = "Failed to load logs.";
+        }
+    };
+
+    if (btnNavSyslog && sysLogModalOverlay) {
+        btnNavSyslog.addEventListener('click', () => {
+            showModal(sysLogModalOverlay);
+            fetchSysLog();
+        });
+    }
+    if (btnRefreshSysLog) btnRefreshSysLog.addEventListener('click', fetchSysLog);
+    if (sysLogModalClose && sysLogModalOverlay) {
+        sysLogModalClose.addEventListener('click', () => {
+            hideModal(sysLogModalOverlay);
+        });
+    }
 }
 
 // ── 12b: Settings form ──
 function setupSettingsHandlers() {
+    const segControl = document.getElementById('thinking-seg-control');
+    if (segControl && dom.inputThinkingBudget) {
+        segControl.querySelectorAll('.sett-seg-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                setThinkingBudgetValue(btn.dataset.val);
+                dom.inputThinkingBudget.dispatchEvent(new Event('change', { bubbles: true }));
+            });
+        });
+        dom.inputThinkingBudget.addEventListener('change', () => {
+            syncThinkingSegmentControl(dom.inputThinkingBudget.value);
+        });
+        syncThinkingSegmentControl(dom.inputThinkingBudget.value);
+    }
+
     // Profile change
     if (dom.selectProfile) {
         dom.selectProfile.addEventListener('change', async (e) => {
@@ -2174,8 +2575,10 @@ function setupSettingsHandlers() {
     // Change detection on all settings inputs
     const settingsInputs = [
         dom.selectProfile, dom.inputApiKey, dom.inputUpstream, dom.inputDefaultModel, dom.inputSonnetMapping,
-        dom.inputHaikuMapping, dom.inputOpusMapping, dom.inputTimeout, dom.inputThinkingBudget,
-        dom.inputRateLimit, dom.inputRateBurst, dom.inputClaudeEnvTemplate,
+        dom.inputHaikuMapping, dom.inputOpusMapping, dom.inputTimeout, dom.inputThinkingBudget, dom.inputListen,
+        dom.inputRateLimit, dom.inputRateBurst, dom.inputRateMinute, dom.inputClaudeEnvTemplate,
+        dom.envDisableNonEssential, dom.envEnableToolSearch, dom.envDisableAttribution, dom.envDisableThinking,
+        dom.envMaxOutputTokens, dom.envMaxMcpTokens, dom.envApiTimeout, dom.envMcpTimeout,
         dom.inputCloseBehavior
     ];
     settingsInputs.forEach(el => {
@@ -2190,13 +2593,20 @@ function setupSettingsHandlers() {
 
         if (!selectEl) return;
 
-        selectEl.addEventListener('change', (e) => {
+        const capturePreviousValue = () => {
+            if (selectEl.value && selectEl.value !== 'custom') selectEl.dataset.previousValue = selectEl.value;
+        };
+
+        selectEl.addEventListener('focus', capturePreviousValue);
+        selectEl.addEventListener('pointerdown', capturePreviousValue);
+
+        selectEl.addEventListener('change', async (e) => {
 
             if (e.target.value !== 'custom') return;
 
-            const previousValue = selectEl.value;
+            const previousValue = selectEl.dataset.previousValue || selectEl.options[0].value;
 
-            const newVal = window.prompt(t('toast_custom_model_prompt'));
+            const newVal = await requestCustomModelName();
 
             if (newVal && newVal.trim()) {
 
@@ -2224,6 +2634,8 @@ function setupSettingsHandlers() {
 
                 }
 
+                selectEl.dataset.previousValue = value;
+
             } else {
 
                 selectEl.value = previousValue || selectEl.options[0].value;
@@ -2244,7 +2656,9 @@ function setupSettingsHandlers() {
                 actionLabel: t('toast_confirm'),
                 actionCallback: () => {
                     if (dom.inputTimeout) dom.inputTimeout.value = '300';
-                    if (dom.inputThinkingBudget) setThinkingBudgetValue('512');
+                    if (dom.inputListen) dom.inputListen.value = '127.0.0.1:8787';
+                    if (dom.inputUpstream) dom.inputUpstream.value = 'https://opencode.ai/zen/go';
+                    if (dom.inputThinkingBudget) setThinkingBudgetValue('2048');
                     if (dom.inputRateLimit) dom.inputRateLimit.value = '100';
                     if (dom.inputRateBurst) dom.inputRateBurst.value = '200';
                     if (dom.inputClaudeEnvTemplate && systemStatus) dom.inputClaudeEnvTemplate.value = orderedJSONString(systemStatus.claude_env || {});
@@ -2279,10 +2693,6 @@ function setupSettingsHandlers() {
         });
     }
 
-    [dom.inputLogEnabled, dom.inputLogDirectory, dom.inputLogRetention].forEach(el => {
-        if (!el) return;
-        el.addEventListener('change', () => saveLogPreferences(false));
-    });
     if (dom.btnSaveLogPrefs) {
         dom.btnSaveLogPrefs.addEventListener('click', () => saveLogPreferences(true));
     }
@@ -2296,13 +2706,13 @@ function setupSettingsHandlers() {
 
 async function saveLogPreferences(showToast) {
     const app = getWailsApp();
-    if (!app || typeof app.SaveLogPreferences !== 'function') return;
+    if (!app || typeof app.SaveLogPreferences !== 'function') return true;
     const enabled = !!(dom.inputLogEnabled && dom.inputLogEnabled.checked);
     const directory = dom.inputLogDirectory ? dom.inputLogDirectory.value.trim() : '';
     const retention = Number(dom.inputLogRetention ? dom.inputLogRetention.value : 14);
     if (!Number.isInteger(retention) || retention < 1 || retention > 365) {
         if (showToast) toast(t('toast_log_prefs_failed') + ': 1-365', 'error');
-        return;
+        return false;
     }
     try {
         const res = await app.SaveLogPreferences(enabled, directory, retention);
@@ -2310,12 +2720,15 @@ async function saveLogPreferences(showToast) {
             if (showToast) toastI18n('toast_log_prefs_saved', 'success');
             await loadPreferences();
             updateTokenContext();
+            return true;
         } else if (showToast) {
             toast(t('toast_log_prefs_failed') + ': ' + res, 'error');
         }
+        return false;
     } catch (err) {
         console.error('Failed to save log preferences:', err);
         if (showToast) toast(t('toast_log_prefs_failed') + ': ' + err.message, 'error');
+        return false;
     }
 }
 
@@ -2328,12 +2741,15 @@ async function handleSaveConfig() {
     const opus = dom.inputOpusMapping.value.trim();
     const upstream = dom.inputUpstream ? dom.inputUpstream.value.trim() : '';
     const timeoutSeconds = dom.inputTimeout ? dom.inputTimeout.value.trim() : '300';
-    const thinkingBudget = dom.inputThinkingBudget ? dom.inputThinkingBudget.value.trim() : '512';
+    const listenAddr = dom.inputListen ? dom.inputListen.value.trim() : '127.0.0.1:8787';
+    const thinkingBudget = dom.inputThinkingBudget ? dom.inputThinkingBudget.value.trim() : '2048';
     const rateLimit = dom.inputRateLimit ? dom.inputRateLimit.value.trim() : '';
     const rateBurst = dom.inputRateBurst ? dom.inputRateBurst.value.trim() : '';
+    const rateMinute = dom.inputRateMinute ? dom.inputRateMinute.value.trim() : '';
     const timeoutNumber = Number(timeoutSeconds);
     const rateLimitNumber = rateLimit ? Number(rateLimit) : 0;
     const rateBurstNumber = rateBurst ? Number(rateBurst) : 0;
+    const rateMinuteNumber = rateMinute ? Number(rateMinute) : 0;
     let claudeEnvTemplate = {};
 
     // Validation
@@ -2348,6 +2764,10 @@ async function handleSaveConfig() {
             hasErrors = true;
         }
     }
+    if (!isValidListenAddress(listenAddr)) {
+        setFieldError('field-listen', t('err_listen_addr'));
+        hasErrors = true;
+    }
     if (!Number.isInteger(timeoutNumber) || timeoutNumber < 1 || timeoutNumber > 3600) {
         setFieldError('field-timeout', t('err_timeout_range'));
         hasErrors = true;
@@ -2358,6 +2778,10 @@ async function handleSaveConfig() {
     }
     if (rateBurst && (!Number.isInteger(rateBurstNumber) || rateBurstNumber < 1 || rateBurstNumber > 100000)) {
         setFieldError('field-rate-burst', t('err_rate_burst_range'));
+        hasErrors = true;
+    }
+    if (rateMinute && (!Number.isInteger(rateMinuteNumber) || rateMinuteNumber < 0 || rateMinuteNumber > 100000)) {
+        setFieldError('field-rate-minute', t('err_rate_minute_range'));
         hasErrors = true;
     }
     if (!ALLOWED_THINKING_BUDGETS.includes(thinkingBudget)) {
@@ -2371,6 +2795,12 @@ async function handleSaveConfig() {
     }
     if (hasErrors) {
         toastI18n('toast_validation_error', 'error');
+        const firstError = document.querySelector('.field.error');
+        if (firstError) {
+            firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            const focusTarget = firstError.querySelector('input, select, textarea, button');
+            if (focusTarget && typeof focusTarget.focus === 'function') focusTarget.focus();
+        }
         return;
     }
 
@@ -2383,7 +2813,7 @@ async function handleSaveConfig() {
     if (app) {
         try {
             const claudeEnvJSON = JSON.stringify(claudeEnvTemplate);
-            const res = await app.SaveProfileConfig(pName, key, defModel, sonnet, haiku, opus, timeoutSeconds, thinkingBudget, upstream, rateLimit, rateBurst, claudeEnvJSON);
+            const res = await app.SaveProfileConfig(pName, key, defModel, sonnet, haiku, opus, timeoutSeconds, thinkingBudget, listenAddr, upstream, rateLimit, rateBurst, rateMinute || '0', claudeEnvJSON);
             if (res === 'success') {
                 if (dom.inputCloseBehavior && typeof app.SavePreferences === 'function') {
                     const prefRes = await app.SavePreferences(normalizeCloseBehavior(dom.inputCloseBehavior.value));
@@ -2417,8 +2847,10 @@ async function handleSaveConfig() {
                     request_timeout_seconds: timeoutNumber,
                     max_thinking_budget_tokens: Number(thinkingBudget),
                     upstream,
+                    listen: listenAddr,
                     rate_limit_per_second: rateLimitNumber,
                     rate_limit_burst: rateBurstNumber,
+                    rate_limit_per_minute: rateMinuteNumber,
                     claude_env: claudeEnvTemplate
                 })
             });
@@ -2431,12 +2863,13 @@ async function handleSaveConfig() {
                 setTimeout(() => setButtonState(dom.btnSaveAllConfig, 'idle'), 1500);
             } else {
                 setButtonState(dom.btnSaveAllConfig, 'idle');
-                toastI18n('toast_save_failed', 'error');
+                const message = await resp.text();
+                toast(t('toast_save_failed') + (message ? ': ' + message : ''), 'error');
             }
         } catch (err) {
             console.error('Fallback save error:', err);
             setButtonState(dom.btnSaveAllConfig, 'idle');
-            toastI18n('toast_save_failed', 'error');
+            toast(t('toast_save_failed') + ': ' + err.message, 'error');
         }
     }
 }
@@ -2486,6 +2919,10 @@ function setupTerminalHandlers() {
         rowMain.tabIndex = 0;
         rowMain.setAttribute('role', 'button');
     });
+
+    if (dom.btnRepairAll) {
+        dom.btnRepairAll.addEventListener('click', handleRepairAll);
+    }
 
     // System Env Buttons
     if (dom.btnSysEnvInstall) {
@@ -2586,22 +3023,25 @@ function applyIntegrationStatus(key, configured) {
     if (key === 'cli') {
         updateIntegrationBadge(dom.sysEnvBadge, configured);
         setSyncState(dom.syncCliState, dom.syncCliDot, configured, 'CLI');
-        if (dom.btnSysEnvInstall) dom.btnSysEnvInstall.disabled = configured;
-        if (dom.btnSysEnvRemove) dom.btnSysEnvRemove.disabled = !configured;
+        setSyncState(null, document.getElementById('dash-cli-dot'), configured, 'CLI');
+        setInstallButtonReapplyState(dom.btnSysEnvInstall, configured);
+        setButtonDisabledIfIdle(dom.btnSysEnvRemove, !configured);
     } else if (key === 'vscode') {
         updateIntegrationBadge(dom.vscodeBadge, configured);
         setSyncState(dom.syncVscodeState, dom.syncVscodeDot, configured, 'VS Code');
-        if (dom.btnVscodeInstall) dom.btnVscodeInstall.disabled = configured;
-        if (dom.btnVscodeRemove) dom.btnVscodeRemove.disabled = !configured;
+        setSyncState(null, document.getElementById('dash-vscode-dot'), configured, 'VS Code');
+        setInstallButtonReapplyState(dom.btnVscodeInstall, configured);
+        setButtonDisabledIfIdle(dom.btnVscodeRemove, !configured);
     } else if (key === 'claude') {
         updateIntegrationBadge(dom.claudeDesktopBadge, configured);
-        setSyncState(dom.syncClaudeState, dom.syncClaudeDot, configured, 'Claude');
-        if (dom.btnSetupDesktop) dom.btnSetupDesktop.disabled = configured;
-        if (dom.btnClearDesktop) dom.btnClearDesktop.disabled = !configured;
+        setInstallButtonReapplyState(dom.btnSetupDesktop, configured);
+        setButtonDisabledIfIdle(dom.btnClearDesktop, !configured);
     } else if (key === 'claudeDesktopApp') {
         updateIntegrationBadge(dom.claudeDesktopAppBadge, configured);
-        if (dom.btnSetupClaudeDesktopApp) dom.btnSetupClaudeDesktopApp.disabled = configured;
-        if (dom.btnClearClaudeDesktopApp) dom.btnClearClaudeDesktopApp.disabled = !configured;
+        setSyncState(dom.syncClaudeState, dom.syncClaudeDot, configured, 'Claude Desktop');
+        setSyncState(null, document.getElementById('dash-claude-dot'), configured, 'Claude Desktop');
+        setInstallButtonReapplyState(dom.btnSetupClaudeDesktopApp, configured);
+        setButtonDisabledIfIdle(dom.btnClearClaudeDesktopApp, !configured);
     }
 }
 
@@ -2609,9 +3049,31 @@ function refreshIntegrationsSoon() {
     window.setTimeout(checkIntegrationsStatus, 350);
 }
 
+function isButtonBusy(btn) {
+    return !!(btn && btn.dataset.busy === 'true');
+}
+
+function setButtonDisabledIfIdle(btn, disabled) {
+    if (!btn || isButtonBusy(btn)) return;
+    btn.disabled = disabled;
+}
+
+function setInstallButtonReapplyState(btn, configured) {
+    if (!btn) return;
+    setButtonDisabledIfIdle(btn, false);
+    if (configured) {
+        btn.title = t('integration_reapply_hint');
+        btn.setAttribute('aria-label', t('integration_reapply_hint'));
+    } else {
+        btn.removeAttribute('title');
+        btn.removeAttribute('aria-label');
+    }
+}
+
 function setButtonBusy(btn, busy, labelKey) {
     if (!btn) return;
     if (busy) {
+        btn.dataset.busy = 'true';
         btn.dataset.idleText = btn.textContent;
         btn.textContent = t(labelKey);
         btn.disabled = true;
@@ -2621,6 +3083,7 @@ function setButtonBusy(btn, busy, labelKey) {
         btn.textContent = btn.dataset.idleText;
         delete btn.dataset.idleText;
     }
+    delete btn.dataset.busy;
     btn.disabled = false;
 }
 
@@ -2682,6 +3145,37 @@ async function handleLaunchTerminal() {
                 btn.textContent = idleText || t('btn_launch_temp_term');
             }, 500);
         }
+    }
+}
+
+async function handleRepairAll() {
+    const app = getWailsApp();
+    if (!app) {
+        toast(t('warn_desktop_only_env'), 'info');
+        return;
+    }
+    const repairFn = typeof app.RepairAllConfigurations === 'function'
+        ? app.RepairAllConfigurations
+        : app.SyncConfiguredIntegrations;
+    if (typeof repairFn !== 'function') {
+        toast(t('warn_desktop_only_env'), 'info');
+        return;
+    }
+    setButtonBusy(dom.btnRepairAll, true, 'env_repairing');
+    try {
+        const res = await repairFn();
+        if (res === 'success') {
+            toastI18n('toast_repair_all_success', 'success');
+            await loadStatus();
+            refreshIntegrationsSoon();
+        } else {
+            toast(t('toast_repair_all_failed') + ': ' + res, 'error');
+        }
+    } catch (err) {
+        console.error('Repair all error:', err);
+        toast(t('toast_repair_all_failed') + ': ' + err.message, 'error');
+    } finally {
+        setButtonBusy(dom.btnRepairAll, false);
     }
 }
 
@@ -2897,17 +3391,22 @@ async function handleClearClaudeDesktopApp() {
 
 // ── 12e: History ──
 function setupHistoryHandlers() {
+    if (dom.sourceFilterSelect) {
+        dom.sourceFilterSelect.addEventListener('change', () => renderHistory(currentHistoryData));
+    }
     if (dom.clearHistoryBtn) {
         dom.clearHistoryBtn.addEventListener('click', async () => {
             try {
                 const resp = await apiFetch('/ocgt/api/history', { method: 'DELETE' });
                 if (resp.ok) {
-                    renderHistoryTable([]);
+                    currentHistoryData = [];
+                    renderHistory([]);
                     toastI18n('toast_history_cleared', 'success');
                 }
             } catch (err) {
                 console.error('Clear history failed:', err);
-                renderHistoryTable([]);
+                currentHistoryData = [];
+                renderHistory([]);
                 toastI18n('toast_history_cleared', 'success');
             }
         });
@@ -3084,8 +3583,73 @@ function setupDashboardHandlers() {
 
 }
 
+function setupRawJsonHandlers() {
+    const btnEditJson = document.getElementById('btn-edit-json');
+    const rawJsonModalOverlay = document.getElementById('rawJsonModalOverlay');
+    const rawJsonTextarea = document.getElementById('rawJsonTextarea');
+    const rawJsonError = document.getElementById('rawJsonError');
+    const rawJsonModalClose = document.getElementById('rawJsonModalClose');
+    const rawJsonCancelBtn = document.getElementById('rawJsonCancelBtn');
+    const rawJsonSaveBtn = document.getElementById('rawJsonSaveBtn');
+
+    if (!btnEditJson || !rawJsonModalOverlay || !rawJsonTextarea || !rawJsonError) return;
+
+    const setRawJsonError = (message) => {
+        rawJsonError.textContent = message;
+        rawJsonError.hidden = !message;
+    };
+    const closeRawJsonModal = () => {
+        hideModal(rawJsonModalOverlay);
+        if (activeRawJsonClose === closeRawJsonModal) activeRawJsonClose = null;
+    };
+
+    btnEditJson.addEventListener('click', async () => {
+        setRawJsonError('');
+        rawJsonTextarea.value = t('raw_json_loading');
+        showModal(rawJsonModalOverlay);
+        activeRawJsonClose = closeRawJsonModal;
+        try {
+            const resp = await apiFetch('/ocgt/api/config/raw');
+            if (!resp.ok) throw new Error(await resp.text());
+            const data = await resp.json();
+            rawJsonTextarea.value = JSON.stringify(data, null, 2);
+        } catch (err) {
+            setRawJsonError(t('raw_json_load_failed') + err.message);
+        }
+    });
+
+    if (rawJsonModalClose) rawJsonModalClose.addEventListener('click', closeRawJsonModal);
+    if (rawJsonCancelBtn) rawJsonCancelBtn.addEventListener('click', closeRawJsonModal);
+    rawJsonModalOverlay.addEventListener('click', (e) => {
+        if (e.target === rawJsonModalOverlay) closeRawJsonModal();
+    });
+
+    if (rawJsonSaveBtn) {
+        rawJsonSaveBtn.addEventListener('click', async () => {
+            setRawJsonError('');
+            try {
+                const parsed = JSON.parse(rawJsonTextarea.value);
+                const resp = await apiFetch('/ocgt/api/config/raw', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(parsed)
+                });
+                if (!resp.ok) throw new Error(await resp.text());
+                closeRawJsonModal();
+                toast(t('raw_json_saved'), 'success');
+                await loadStatus();
+                refreshIntegrationsSoon();
+            } catch (err) {
+                setRawJsonError(t('raw_json_save_failed') + err.message);
+            }
+        });
+    }
+}
+
 // ── 12h: Modals ──
 function setupModalHandlers() {
+    setupRawJsonHandlers();
+
     if (dom.btnAboutApp) {
         dom.btnAboutApp.addEventListener('click', () => {
             const app = getWailsApp();
@@ -3183,7 +3747,8 @@ function setupEventHandlers() {
     // Retry connection button
     if (dom.loadingRetryBtn) {
         dom.loadingRetryBtn.addEventListener('click', () => {
-            dom.loadingRetryBtn.classList.add('hidden');
+            dom.loadingRetryBtn.disabled = true;
+            showLoadingOverlay(true, false);
             initializeApp();
         });
     }
@@ -3198,22 +3763,6 @@ function setupEnvRepairHandlers() {
 }
 // ══════════════════════════════════════════════════════
 
-(function initMinimizeDetection() {
-    let minimizeDebounce = null;
-    function tryHideToTray() {
-        if (minimizeDebounce) clearTimeout(minimizeDebounce);
-        minimizeDebounce = setTimeout(() => {
-            if (!dom.inputCloseBehavior || dom.inputCloseBehavior.value !== 'minimize') return;
-            if (document.hidden || (window.outerWidth < 100 && window.outerHeight < 100)) {
-                callWails('HideToTray').catch(e => console.error('[ocgt] HideToTray error:', e));
-            }
-        }, 200);
-    }
-    document.addEventListener('visibilitychange', () => { if (document.hidden) tryHideToTray(); });
-    window.addEventListener('resize', () => {
-        if (window.outerWidth < 100 || window.outerHeight < 100) tryHideToTray();
-    });
-})();
 // ══════════════════════════════════════════════════════
 
 document.addEventListener('DOMContentLoaded', () => {

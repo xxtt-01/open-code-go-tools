@@ -1,12 +1,40 @@
-# Release Notes - v0.1.9
+# Release Notes - v2.0.0
 
 ## 🌐 语言选择 / Language
-* [简体中文 (Simplified Chinese)](#-ocgt-v0.1.9---极简原生双语控制面板发布)
-* [English](#-ocgt-v0.1.9---premium-bilingual-desktop-control-panel-release)
+* [简体中文 (Simplified Chinese)](#-ocgt-v200---重大更新版本发布)
+* [English](#-ocgt-v200---major-update-release)
 
 ---
 
-# 🇨🇳 ocgt v0.1.9 - 极简原生双语控制面板发布
+# 🇨🇳 ocgt v2.0.0 - 重大更新版本发布
+
+本次 2.0.0 版本包含全面的系统升级，完整的 MD 文档更新与最新的控制面板截图。
+支持多系统（Windows, macOS, Linux）架构。
+- 移除了旧版的 AI 生成界面截图，全面替换为最新的实机截图。
+- 同步最新的 OpenCode Go 工作流。
+- 更多底层稳定性改进。
+
+---
+
+# 🇺🇸 ocgt v2.0.0 - Major Update Release
+
+This 2.0.0 release includes comprehensive system upgrades, fully updated MD documentation, and the latest control panel screenshots.
+Supports multi-OS (Windows, macOS, Linux) architectures.
+- Removed old AI-generated screenshots, replaced with the latest actual screenshots.
+- Synced with the newest OpenCode Go workflow.
+- More underlying stability improvements.
+
+---
+
+# Release Notes - v2.0.0
+
+## 🌐 语言选择 / Language
+* [简体中文 (Simplified Chinese)](#-ocgt-v2.0.0---极简原生双语控制面板发布)
+* [English](#-ocgt-v2.0.0---premium-bilingual-desktop-control-panel-release)
+
+---
+
+# 🇨🇳 ocgt v2.0.0 - 极简原生双语控制面板发布
 
 本版本聚焦于**极致的原生中英双语优化**、**Wails 桌面客户端深度打磨**，并针对 **OpenCode Go** 服务订阅包和 **Claude Code** 工作流进行了极致的极简配置提炼。
 
@@ -40,12 +68,12 @@
 - 已运行自动化单元测试并通过所有 Go test 工具验证：`go test ./...`
 - 已构建并测试完生产环境下 Windows 原生 x64 可执行文件：
   ```text
-  build\bin\ocgt_v0.1.9.exe
+  build\bin\ocgt_v2.0.0.exe
   ```
 
 ---
 
-# 🇺🇸 ocgt v0.1.9 - Premium Bilingual Desktop Control Panel Release
+# 🇺🇸 ocgt v2.0.0 - Premium Bilingual Desktop Control Panel Release
 
 This release focuses on **comprehensive native bilingual integration**, **polishing the Wails desktop environment**, and delivering a highly streamlined experience specifically tailored for **OpenCode Go** subscription setups and the official **Claude Code** workflow.
 
@@ -79,5 +107,5 @@ This release focuses on **comprehensive native bilingual integration**, **polish
 - Successfully verified code compliance and passing Go test suites: `go test ./...`
 - Compiled and tested the native Windows production binary:
   ```text
-  build\bin\ocgt_v0.1.9.exe
+  build\bin\ocgt_v2.0.0.exe
   ```

@@ -375,12 +375,86 @@ func rateLimitMiddleware(rl *rateLimiter, next http.Handler) http.Handler {
 		clientIP := getClientIP(r)
 
 		if !rl.allow(clientIP) {
-			writeError(w, http.StatusTooManyRequests, errors.New("rate limit exceeded, please try again later"))
+			writeError(w, http.StatusTooManyRequests, errors.New("rate limit exceeded (per second), please try again later"))
 			return
 		}
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// rpmLimitMiddleware creates a middleware that limits requests per minute per client IP
+func rpmLimitMiddleware(rl *rpmLimiter, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Skip rate limiting for health checks and OPTIONS
+		if r.URL.Path == "/healthz" || r.Method == "OPTIONS" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		clientIP := getClientIP(r)
+
+		if !rl.allow(clientIP) {
+			writeError(w, http.StatusTooManyRequests, errors.New("quota limit exceeded (requests per minute), please try again later"))
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// rpmLimiter implements a simple sliding window counter for Requests Per Minute
+type rpmLimiter struct {
+	mu       sync.Mutex
+	clients  map[string]*rpmBucket
+	limit    int // max requests per minute
+}
+
+type rpmBucket struct {
+	count    int
+	windowStart time.Time
+}
+
+func newRpmLimiter(limit int) *rpmLimiter {
+	return &rpmLimiter{
+		clients: make(map[string]*rpmBucket),
+		limit:   limit,
+	}
+}
+
+func (rl *rpmLimiter) setLimit(limit int) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	rl.limit = limit
+}
+
+func (rl *rpmLimiter) allow(clientIP string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	if rl.limit <= 0 {
+		return true
+	}
+	now := time.Now()
+	bucket, exists := rl.clients[clientIP]
+	if !exists {
+		bucket = &rpmBucket{
+			count:       0,
+			windowStart: now,
+		}
+		rl.clients[clientIP] = bucket
+	}
+
+	// Reset window if more than 1 minute has passed
+	if now.Sub(bucket.windowStart) >= time.Minute {
+		bucket.count = 0
+		bucket.windowStart = now
+	}
+
+	if bucket.count < rl.limit {
+		bucket.count++
+		return true
+	}
+	return false
 }
 
 // getClientIP extracts the client IP from the request, returning a canonical

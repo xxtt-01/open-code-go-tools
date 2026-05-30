@@ -667,14 +667,90 @@ func TestClientSourceFromRequest(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	req.Header.Set("X-Ocgt-Client", "vscode-claude-code")
 
-	if got := clientSourceFromRequest(req); got != "VS Code Claude Code" {
+	if got := clientSourceFromRequest(req); got != "VS Code 插件 (VS Code Claude)" {
 		t.Fatalf("client source = %q", got)
 	}
 
 	req = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	req.Header.Set("X-Ocgt-Profile", "opencode-go, X-Ocgt-Client: claude-app")
-	if got := clientSourceFromRequest(req); got != "Claude app" {
+	if got := clientSourceFromRequest(req); got != "桌面端 (Claude App)" {
 		t.Fatalf("combined header client source = %q", got)
+	}
+}
+
+func TestRawClaudeSettingsConfigCreatesMissingFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	srv, err := New(config.Config{
+		Listen:        "127.0.0.1:0",
+		Upstream:      "https://example.invalid",
+		ActiveProfile: "test",
+		Profiles: map[string]config.Profile{
+			"test": {APIKey: "test-key", DefaultModel: "kimi-k2.6"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/ocgt/api/config/raw", nil)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	if strings.TrimSpace(rr.Body.String()) != "{}" {
+		t.Fatalf("GET body = %q, want empty JSON object", rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/ocgt/api/config/raw", strings.NewReader(`{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8787"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("settings file was not created: %v", err)
+	}
+	if !strings.Contains(string(data), `"ANTHROPIC_BASE_URL": "http://127.0.0.1:8787"`) {
+		t.Fatalf("settings file missing formatted env: %s", data)
+	}
+}
+
+func TestApiSetKeyCanClearRateLimitPerMinute(t *testing.T) {
+	srv, err := New(config.Config{
+		Listen:                  "127.0.0.1:0",
+		Upstream:                "https://example.invalid",
+		RequestTimeoutSeconds:   300,
+		RateLimitPerSecond:      100,
+		RateLimitBurst:          200,
+		RateLimitPerMinute:      60,
+		MaxThinkingBudgetTokens: 2048,
+		ActiveProfile:           "test",
+		Profiles: map[string]config.Profile{
+			"test": {APIKey: "test-key", DefaultModel: "kimi-k2.6"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.SetConfigPath(filepath.Join(t.TempDir(), "config.json"))
+
+	req := httptest.NewRequest(http.MethodPost, "/ocgt/api/key", strings.NewReader(`{"profile":"test","rate_limit_per_minute":0}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	if srv.config.RateLimitPerMinute != 0 {
+		t.Fatalf("rate limit per minute = %d, want 0", srv.config.RateLimitPerMinute)
 	}
 }
 

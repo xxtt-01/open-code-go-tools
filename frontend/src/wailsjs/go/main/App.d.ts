@@ -37,11 +37,13 @@ export function QuitApp():Promise<void>;
 
 export function RemoveVSCodeEnv():Promise<string>;
 
+export function RepairAllConfigurations():Promise<string>;
+
 export function SaveLogPreferences(arg1:boolean,arg2:string,arg3:number):Promise<string>;
 
 export function SavePreferences(arg1:string):Promise<string>;
 
-export function SaveProfileConfig(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string,arg8:string,arg9:string,arg10:string,arg11:string,arg12:string):Promise<string>;
+export function SaveProfileConfig(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string,arg8:string,arg9:string,arg10:string,arg11:string,arg12:string,arg13:string,arg14:string):Promise<string>;
 
 export function SaveUIPreferences(arg1:string,arg2:string,arg3:number,arg4:string,arg5:string,arg6:string):Promise<string>;
 

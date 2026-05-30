@@ -27,6 +27,8 @@ import (
 
 	"os/signal"
 
+	"path/filepath"
+
 	"sort"
 
 	"strings"
@@ -42,7 +44,7 @@ import (
 )
 
 //go:embed all:frontend
-var assets embed.FS
+var Assets embed.FS
 
 func main() {
 	args := os.Args[1:]
@@ -62,15 +64,27 @@ func main() {
 func runWailsGui() {
 	app := NewApp()
 
+	// Redirect log output to proxy.log
+	home, _ := os.UserHomeDir()
+	logDir := filepath.Join(home, ".ocgt")
+	os.MkdirAll(logDir, 0755)
+	logFile, err := os.OpenFile(filepath.Join(logDir, "proxy.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err == nil {
+		log.SetOutput(io.MultiWriter(os.Stderr, logFile))
+	} else {
+		log.Println("Failed to open proxy.log for writing:", err)
+	}
+
 	// Configure Wails options
-	err := wails.Run(&options.App{
+	err = wails.Run(&options.App{
 		Title:             "ocgt Control Panel / 控制面板",
 		Width:             1100,
 		Height:            850,
 		HideWindowOnClose: false,
 		OnBeforeClose:     app.beforeClose,
 		AssetServer: &assetserver.Options{
-			Assets: assets,
+			Assets:  Assets,
+			Handler: nil,
 		},
 		BackgroundColour: &options.RGBA{R: 248, G: 250, B: 252, A: 255}, // premium SaaS light background (#f8fafc)
 		OnStartup:        app.startup,
@@ -163,7 +177,7 @@ func cmdServe(args []string) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
-	srv, err := proxy.New(cfg)
+	srv, err := proxy.New(cfg, &Assets)
 	if err != nil {
 		return err
 	}

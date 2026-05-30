@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -53,7 +54,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/ocgt/api/profiles/active", s.apiSetActiveProfile)
 	mux.HandleFunc("/ocgt/api/key", s.apiSetKey)
 	mux.HandleFunc("/ocgt/api/history", s.apiHistory)
+	mux.HandleFunc("/ocgt/api/syslog", s.apiSyslog)
 	mux.HandleFunc("/ocgt/api/version", s.apiVersion)
+	mux.HandleFunc("/ocgt/api/config/raw", s.apiRawConfig)
 
 	mux.HandleFunc("/", s.serveStatic)
 
@@ -72,7 +75,11 @@ func (s *Server) Handler() http.Handler {
 	if s.rateLimiter == nil {
 		s.rateLimiter = newRateLimiter(s.config.RateLimit())
 	}
+	if s.rpmLimiter == nil {
+		s.rpmLimiter = newRpmLimiter(s.config.RateLimitPerMinute)
+	}
 	handler = rateLimitMiddleware(s.rateLimiter, handler)
+	handler = rpmLimitMiddleware(s.rpmLimiter, handler)
 
 	return handler
 }
@@ -761,13 +768,23 @@ func clientSourceFromRequest(r *http.Request) string {
 	if raw == "" && isClaudeDesktopRoute(r) {
 		raw = "claude-app"
 	}
+
+	// Advanced User-Agent inspection
+	ua := strings.ToLower(r.Header.Get("User-Agent"))
+	if strings.Contains(ua, "vscode") || strings.Contains(ua, "code/") {
+		return "VS Code 插件 (VS Code Claude)"
+	}
+	if strings.Contains(ua, "node-fetch") {
+		return "终端 CLI (Claude Code CLI)"
+	}
+
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "claude-code-cli", "cli", "claude cli":
-		return "Claude Code CLI"
+		return "终端 CLI (Claude Code CLI)"
 	case "vscode-claude-code", "vscode", "vs code", "vscode claude code":
-		return "VS Code Claude Code"
+		return "VS Code 插件 (VS Code Claude)"
 	case "claude-app", "claude", "claude desktop", "desktop":
-		return "Claude app"
+		return "桌面端 (Claude App)"
 	case "":
 		return "Unknown"
 	default:
@@ -921,6 +938,7 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 	timeoutSeconds := s.config.RequestTimeoutSeconds
 	thinkingBudgetTokens := s.config.ThinkingBudgetTokens()
 	rateLimitPerSecond, rateLimitBurst := s.config.RateLimit()
+	rateLimitPerMinute := s.config.RateLimitPerMinute
 	claudeEnv := map[string]string{}
 	if len(s.config.ClaudeEnv) > 0 {
 		for key, value := range s.config.ClaudeEnv {
@@ -941,6 +959,7 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 		"max_thinking_budget_tokens": thinkingBudgetTokens,
 		"rate_limit_per_second":      rateLimitPerSecond,
 		"rate_limit_burst":           rateLimitBurst,
+		"rate_limit_per_minute":      rateLimitPerMinute,
 		"claude_env":                 claudeEnv,
 		"api_key_configured":         profile.APIKeyValue() != "",
 		"config_path":                configPath,
@@ -1037,8 +1056,10 @@ func (s *Server) apiSetKey(w http.ResponseWriter, r *http.Request) {
 		RequestTimeoutSeconds   int               `json:"request_timeout_seconds"`
 		MaxThinkingBudgetTokens int               `json:"max_thinking_budget_tokens"`
 		Upstream                string            `json:"upstream"`
+		Listen                  string            `json:"listen"`
 		RateLimitPerSecond      int               `json:"rate_limit_per_second"`
 		RateLimitBurst          int               `json:"rate_limit_burst"`
+		RateLimitPerMinute      *int              `json:"rate_limit_per_minute"`
 		ClaudeEnv               map[string]string `json:"claude_env"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, MaxBodySize)).Decode(&req); err != nil {
@@ -1074,6 +1095,16 @@ func (s *Server) apiSetKey(w http.ResponseWriter, r *http.Request) {
 	if req.RateLimitBurst != 0 && (req.RateLimitBurst < 1 || req.RateLimitBurst > 100000) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("rate_limit_burst must be between 1 and 100000, got %d", req.RateLimitBurst))
 		return
+	}
+	if req.RateLimitPerMinute != nil && (*req.RateLimitPerMinute < 0 || *req.RateLimitPerMinute > 100000) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("rate_limit_per_minute must be between 0 and 100000, got %d", *req.RateLimitPerMinute))
+		return
+	}
+	if strings.TrimSpace(req.Listen) != "" {
+		if err := config.ValidateListenAddress(req.Listen); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
 	}
 
 	// If the API key looks masked (contains "..." or is the short placeholder),
@@ -1111,11 +1142,20 @@ func (s *Server) apiSetKey(w http.ResponseWriter, r *http.Request) {
 		s.config.Upstream = strings.TrimSpace(req.Upstream)
 		s.upstream = s.config.Upstream
 	}
+	if strings.TrimSpace(req.Listen) != "" {
+		s.config.Listen = strings.TrimSpace(req.Listen)
+	}
 	if req.RateLimitPerSecond != 0 {
 		s.config.RateLimitPerSecond = req.RateLimitPerSecond
 	}
 	if req.RateLimitBurst != 0 {
 		s.config.RateLimitBurst = req.RateLimitBurst
+	}
+	if req.RateLimitPerMinute != nil {
+		s.config.RateLimitPerMinute = *req.RateLimitPerMinute
+		if s.rpmLimiter != nil {
+			s.rpmLimiter.setLimit(*req.RateLimitPerMinute)
+		}
 	}
 	if req.ClaudeEnv != nil {
 		s.config.ClaudeEnv = req.ClaudeEnv
@@ -1150,6 +1190,80 @@ func (s *Server) apiHistory(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, fmt.Errorf("method %s not supported", r.Method))
 	}
+}
+
+func (s *Server) apiSyslog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, fmt.Errorf("method %s not supported", r.Method))
+		return
+	}
+	home, _ := os.UserHomeDir()
+	logPath := filepath.Join(home, ".ocgt", "proxy.log")
+
+	content, err := os.ReadFile(logPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeJSON(w, http.StatusOK, map[string]string{"log": "Proxy log file not found or hasn't been created yet."})
+			return
+		}
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("failed to read log: %w", err))
+		return
+	}
+
+	// Keep last 1000 lines approx (around 100KB)
+	const maxLen = 100 * 1024
+	if len(content) > maxLen {
+		content = content[len(content)-maxLen:]
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"log": string(content)})
+}
+
+func (s *Server) apiRawConfig(w http.ResponseWriter, r *http.Request) {
+	home, _ := os.UserHomeDir()
+	configPath := filepath.Join(home, ".claude", "settings.json")
+
+	if r.Method == http.MethodGet {
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				writeJSON(w, http.StatusOK, map[string]any{})
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(data)
+		return
+	}
+
+	if r.Method == http.MethodPost {
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		var js map[string]interface{}
+		if err := json.Unmarshal(data, &js); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("Invalid JSON: %w", err))
+			return
+		}
+		// Formatting and saving
+		formatted, _ := json.MarshalIndent(js, "", "  ")
+		if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if err := os.WriteFile(configPath, formatted, 0644); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]string{"status": "success"})
+		return
+	}
+
+	writeError(w, http.StatusMethodNotAllowed, fmt.Errorf("Method not allowed"))
 }
 
 func (s *Server) apiVersion(w http.ResponseWriter, r *http.Request) {

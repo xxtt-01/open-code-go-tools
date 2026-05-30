@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -191,9 +193,21 @@ func (a *App) startup(ctx context.Context) {
 			log.Println("[GUI proxy] config load error:", err)
 			return
 		}
+		if strings.TrimSpace(cfg.LocalAuthToken) == "" {
+			token, err := generateLocalAuthToken()
+			if err != nil {
+				log.Println("[GUI proxy] auth token generation error:", err)
+				return
+			}
+			cfg.LocalAuthToken = token
+			if err := cfg.Save(defaultPath); err != nil {
+				log.Println("[GUI proxy] auth token save error:", err)
+				return
+			}
+		}
 
 		// 3. Create server
-		srv, err := proxy.New(cfg)
+		srv, err := proxy.New(cfg, &Assets)
 		if err != nil {
 			log.Println("[GUI proxy] server creation error:", err)
 			return
@@ -205,6 +219,9 @@ func (a *App) startup(ctx context.Context) {
 		}
 		srv.SetConfigPath(defaultPath)
 		a.srv = srv
+		if errStr := a.SyncConfiguredIntegrations(); errStr != "success" {
+			log.Println("[GUI proxy] integration resync error:", errStr)
+		}
 
 		// 4. Listen and Serve with cancellation context
 		proxyCtx, cancel := context.WithCancel(context.Background())
@@ -215,6 +232,14 @@ func (a *App) startup(ctx context.Context) {
 			log.Println("[GUI proxy] server stopped:", err)
 		}
 	}()
+}
+
+func generateLocalAuthToken() (string, error) {
+	buf := make([]byte, 24)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }
 
 // domReady is called when the frontend DOM is fully loaded and ready.
@@ -279,7 +304,7 @@ func (a *App) localProxyAuthToken() string {
 }
 
 // SaveProfileConfig saves API key, model aliases, proxy, timeout, and thinking settings.
-func (a *App) SaveProfileConfig(profileName, apiKey, defaultModel, sonnetAlias, haikuAlias, opusAlias, timeoutSeconds, thinkingBudgetTokens, upstream, rateLimitPerSecond, rateLimitBurst, claudeEnvJSON string) string {
+func (a *App) SaveProfileConfig(profileName, apiKey, defaultModel, sonnetAlias, haikuAlias, opusAlias, timeoutSeconds, thinkingBudgetTokens, listenAddr, upstream, rateLimitPerSecond, rateLimitBurst, rateLimitPerMinute, claudeEnvJSON string) string {
 	// 1. Resolve path
 	path, err := config.DefaultPath()
 	if err != nil {
@@ -323,6 +348,9 @@ func (a *App) SaveProfileConfig(profileName, apiKey, defaultModel, sonnetAlias, 
 		}
 		cfg.MaxThinkingBudgetTokens = budget
 	}
+	if strings.TrimSpace(listenAddr) != "" {
+		cfg.Listen = strings.TrimSpace(listenAddr)
+	}
 	if strings.TrimSpace(upstream) != "" {
 		cfg.Upstream = strings.TrimSpace(upstream)
 	}
@@ -345,6 +373,16 @@ func (a *App) SaveProfileConfig(profileName, apiKey, defaultModel, sonnetAlias, 
 			return "rate limit burst must be between 1 and 100000"
 		}
 		cfg.RateLimitBurst = burst
+	}
+	if rateLimitPerMinute != "" {
+		perMinute, err := strconv.Atoi(rateLimitPerMinute)
+		if err != nil {
+			return "rate limit per minute must be a number"
+		}
+		if perMinute < 0 || perMinute > 100000 {
+			return "rate limit per minute must be between 0 and 100000"
+		}
+		cfg.RateLimitPerMinute = perMinute
 	}
 	if strings.TrimSpace(claudeEnvJSON) != "" {
 		claudeEnv := map[string]string{}
@@ -401,6 +439,29 @@ func (a *App) SyncConfiguredIntegrations() string {
 	return "success"
 }
 
+func (a *App) RepairAllConfigurations() string {
+	var errs []string
+	repairVSCode := a.IsVSCodeConfigured()
+	repairClaudeDesktopApp := a.IsClaudeDesktopAppConfigured()
+	if errStr := a.InstallClaudeUserEnv(); errStr != "success" {
+		errs = append(errs, "repair CLI error: "+errStr)
+	}
+	if repairVSCode {
+		if errStr := a.InstallVSCodeEnv(); errStr != "success" {
+			errs = append(errs, "repair VS Code error: "+errStr)
+		}
+	}
+	if repairClaudeDesktopApp {
+		if errStr := a.SetupClaudeDesktopApp(); errStr != "success" {
+			errs = append(errs, "repair Claude Desktop app error: "+errStr)
+		}
+	}
+	if len(errs) > 0 {
+		return strings.Join(errs, "; ")
+	}
+	return "success"
+}
+
 // InstallClaudeUserEnv persists Claude Code environment variables for new shells.
 func (a *App) InstallClaudeUserEnv() string {
 
@@ -444,28 +505,7 @@ func (a *App) SetupClaudeDesktop() string {
 }
 
 func (a *App) IsClaudeDesktopConfigured() bool {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return false
-	}
-	settingsPath := filepath.Join(home, ".claude", "settings.json")
-	data, err := os.ReadFile(settingsPath)
-	if err != nil {
-		return false
-	}
-	var settings map[string]any
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return false
-	}
-	envMap, _ := settings["env"].(map[string]any)
-	if envMap == nil {
-		return false
-	}
-	baseURL, ok := envMap["ANTHROPIC_BASE_URL"].(string)
-	if !ok {
-		return false
-	}
-	return strings.Contains(baseURL, a.GetListenAddress())
+	return a.isClaudeSettingsConfiguredForClient("claude-app")
 }
 
 func (a *App) ClearClaudeDesktop() string {

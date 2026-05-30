@@ -74,6 +74,10 @@ export function RemoveVSCodeEnv() {
   return window['go']['main']['App']['RemoveVSCodeEnv']();
 }
 
+export function RepairAllConfigurations() {
+  return window['go']['main']['App']['RepairAllConfigurations']();
+}
+
 export function SaveLogPreferences(arg1, arg2, arg3) {
   return window['go']['main']['App']['SaveLogPreferences'](arg1, arg2, arg3);
 }
@@ -82,8 +86,8 @@ export function SavePreferences(arg1) {
   return window['go']['main']['App']['SavePreferences'](arg1);
 }
 
-export function SaveProfileConfig(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12) {
-  return window['go']['main']['App']['SaveProfileConfig'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12);
+export function SaveProfileConfig(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14) {
+  return window['go']['main']['App']['SaveProfileConfig'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14);
 }
 
 export function SaveUIPreferences(arg1, arg2, arg3, arg4, arg5, arg6) {

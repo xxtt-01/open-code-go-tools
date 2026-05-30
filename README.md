@@ -9,19 +9,19 @@
 ## ✨ 核心功能
 
 ### 📊 系统状态看板
-![System Status](assets/gui_status.png)
+![System Status](assets/2026-05-30_213807.png)
 - 实时监控代理监听端口（默认 `127.0.0.1:8787`）及上游 API 状态
 - 可视化配置文件路径，一键打开所在文件夹
 
 ### ⚙️ 极简配置管理
-![Configuration Settings](assets/gui_config.png)
+![Configuration Settings](assets/2026-05-30_213821.png)
 - 填入 API Key 即秒级热重载生效
 - **模型映射**：Sonnet / Haiku / Opus 自由映射上游平替
 - **思考强度**：快速 / 慢速 / 深度 / 极客 / 关闭，杜绝误配
 - **模型回退链**：主模型失败自动尝试 FallbackChain
 
 ### 💻 一键终端唤醒
-![Terminal Activation](assets/gui_terminal.png)
+![Terminal Activation](assets/2026-05-30_213831.png)
 - 选 PowerShell / Bash / CMD，一键拉起已注入全部代理变量的原生终端
 - 进入窗口直接 `claude` 即可开始
 - 外部终端支持一键复制环境变量 & CC Switch JSON 导入
@@ -39,7 +39,7 @@
 
 ## 🚀 快速开始
 
-1. **下载**：[Releases](../../releases) → 选系统版本（Windows: `ocgt_v0.2.0.exe`）
+1. **下载**：[Releases](../../releases) → 选系统版本（Windows: `ocgt_v2.0.0.exe`）
 2. **配置**：配置管理页 → 填 **OpenCode Go API Key** → 选模型 → 保存并热重载
 3. **启动**：终端启动页 → 选终端类型 → 一键拉起 → 输入 `claude`
 
@@ -100,29 +100,54 @@ wails dev          # 开发模式
 .\build.bat        # 生产构建
 ```
 
----
-
-## ⚠️ 已知限制
-
-### Usage 统计不完整
-
-通过 ocgt 代理时，`used_percentage` 和 usage 统计可能不准确，原因如下：
-
-1. **协议差异**: OpenAI Chat Completions API 不支持 Anthropic 的 prompt caching 字段
-   - `cache_creation_input_tokens` → 始终为 0
-   - `cache_read_input_tokens` → 始终为 0
-
-2. **上游限制**: 非Anthropic 模型 (kimi/deepseek/qwen等) 不返回 prompt caching 数据
-
-3. **影响**: `used_percentage = (input + cache_creation + cache_read) / window_size` 计算结果偏低
-
-**这不是 bug，而是架构限制**。如需完整的 usage 统计，请使用 Anthropic 原生 API 或支持 prompt caching 的上游。
-
----
-
-## 📄 许可证
-
-MIT License
-
-## 邀请链接
+---
+
+
+
+## ⚠️ 已知限制
+
+
+
+### Usage 统计不完整
+
+
+
+通过 ocgt 代理时，`used_percentage` 和 usage 统计可能不准确，原因如下：
+
+
+
+1. **协议差异**: OpenAI Chat Completions API 不支持 Anthropic 的 prompt caching 字段
+
+   - `cache_creation_input_tokens` → 始终为 0
+
+   - `cache_read_input_tokens` → 始终为 0
+
+
+
+2. **上游限制**: 非Anthropic 模型 (kimi/deepseek/qwen等) 不返回 prompt caching 数据
+
+
+
+3. **影响**: `used_percentage = (input + cache_creation + cache_read) / window_size` 计算结果偏低
+
+
+
+**这不是 bug，而是架构限制**。如需完整的 usage 统计，请使用 Anthropic 原生 API 或支持 prompt caching 的上游。
+
+
+
+---
+
+
+
+## 📄 许可证
+
+
+
+MIT License
+
+
+
+## 邀请链接
+
 可以走此链接订购go计划：https://opencode.ai/go?ref=RRWQDE4CWW

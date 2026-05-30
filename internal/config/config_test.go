@@ -118,6 +118,22 @@ func TestValidateInvalidUpstream(t *testing.T) {
 	}
 }
 
+func TestValidateListenAddress(t *testing.T) {
+	valid := []string{"127.0.0.1:8787", "localhost:8787", ":8787", "[::1]:8787"}
+	for _, listen := range valid {
+		if err := ValidateListenAddress(listen); err != nil {
+			t.Fatalf("ValidateListenAddress(%q) returned error: %v", listen, err)
+		}
+	}
+
+	invalid := []string{"", "127.0.0.1", "http://127.0.0.1:8787", "127.0.0.1:0", "127.0.0.1:70000", "bad host:8787"}
+	for _, listen := range invalid {
+		if err := ValidateListenAddress(listen); err == nil {
+			t.Fatalf("ValidateListenAddress(%q) expected error", listen)
+		}
+	}
+}
+
 func TestRequestTimeoutDefault(t *testing.T) {
 	cfg := Config{
 		Listen:        "127.0.0.1:8787",

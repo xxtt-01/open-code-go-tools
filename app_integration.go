@@ -43,34 +43,33 @@ func (a *App) isClaudeSettingsConfiguredForClient(expectedClient string) bool {
 		return false
 	}
 
-	localToken := a.localProxyAuthToken()
-	if localToken != "" {
-		token, ok := envMap["ANTHROPIC_AUTH_TOKEN"].(string)
-		if !ok || token != localToken {
-			return false
-		}
-	} else {
-		apiKey, ok := envMap["ANTHROPIC_API_KEY"].(string)
-		if !ok || apiKey != "ocgt-local-proxy" {
-			return false
-		}
-	}
-
-	customHeaders, ok := envMap["ANTHROPIC_CUSTOM_HEADERS"].(string)
-	if !ok || !strings.Contains(customHeaders, "X-Ocgt-Client: "+expectedClient) {
+	if token, ok := envMap["ANTHROPIC_AUTH_TOKEN"].(string); ok && token != "" {
+		// A non-empty token means ocgt wrote this target before. The current
+		// launch will refresh it if the persisted token changed.
+	} else if apiKey, ok := envMap["ANTHROPIC_API_KEY"].(string); !ok || apiKey != "ocgt-local-proxy" {
 		return false
 	}
 
+	customHeaders, ok := envMap["ANTHROPIC_CUSTOM_HEADERS"].(string)
+	if !ok || !strings.Contains(customHeaders, "X-Ocgt-Profile:") {
+		return false
+	}
+	if expectedClient != "" && !strings.Contains(customHeaders, "X-Ocgt-Client: "+expectedClient) {
+		return false
+	}
 	return true
 }
 
 func (a *App) ClearSystemEnv() string {
+	// Clean up legacy environment variables to ensure we cleanly migrate to JSON-only config
 	for _, name := range legacyClaudeEnvNames() {
 		_ = unsetUserEnvironment(name)
 	}
+
 	if err := clearClaudeSettings(); err != nil {
 		return "clear Claude settings error: " + err.Error()
 	}
+
 	return "success"
 }
 
@@ -246,7 +245,7 @@ func (a *App) IsClaudeDesktopAppConfigured() bool {
 	if profile["inferenceGatewayAuthScheme"] != "bearer" {
 		return false
 	}
-	if token, _ := profile["inferenceGatewayApiKey"].(string); token == "" || token != a.localProxyAuthToken() {
+	if token, _ := profile["inferenceGatewayApiKey"].(string); token == "" {
 		return false
 	}
 	if readJSONObject(threepConfig)["deploymentMode"] != "3p" {

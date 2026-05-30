@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -17,9 +19,10 @@ const (
 	DefaultListen                  = "127.0.0.1:8787"
 	DefaultUpstream                = "https://opencode.ai/zen/go"
 	DefaultRequestTimeoutSeconds   = 300
-	DefaultMaxThinkingBudgetTokens = 512
+	DefaultMaxThinkingBudgetTokens = 2048
 	DefaultRateLimitPerSecond      = 100
 	DefaultRateLimitBurst          = 200
+	DefaultRateLimitPerMinute      = 0 // 0 means unlimited
 )
 
 type Config struct {
@@ -34,6 +37,7 @@ type Config struct {
 	MaxConcurrentRequests   int                `json:"max_concurrent_requests,omitempty"` // Optional concurrent request limit
 	RateLimitPerSecond      int                `json:"rate_limit_per_second,omitempty"`   // Rate limit: requests per second per IP
 	RateLimitBurst          int                `json:"rate_limit_burst,omitempty"`        // Rate limit: max burst size per IP
+	RateLimitPerMinute      int                `json:"rate_limit_per_minute,omitempty"`   // Quota protection: max requests per minute (0 = unlimited)
 	ClaudeEnv               map[string]string  `json:"claude_env,omitempty"`              // User-editable Claude Code env template
 }
 
@@ -261,6 +265,9 @@ func (c *Config) applyDefaults() {
 }
 
 func (c Config) Validate() error {
+	if err := ValidateListenAddress(c.Listen); err != nil {
+		return err
+	}
 	if _, err := url.ParseRequestURI(c.Upstream); err != nil {
 		return fmt.Errorf("invalid upstream %q: %w", c.Upstream, err)
 	}
@@ -276,11 +283,29 @@ func (c Config) Validate() error {
 	if c.RateLimitBurst < 1 || c.RateLimitBurst > 100000 {
 		return fmt.Errorf("rate_limit_burst must be between 1 and 100000, got %d", c.RateLimitBurst)
 	}
+	if c.RateLimitPerMinute < 0 || c.RateLimitPerMinute > 100000 {
+		return fmt.Errorf("rate_limit_per_minute must be between 0 and 100000, got %d", c.RateLimitPerMinute)
+	}
 	if len(c.Profiles) == 0 {
 		return errors.New("at least one profile is required")
 	}
 	if _, ok := c.Profiles[c.ActiveProfile]; !ok {
 		return fmt.Errorf("active profile %q does not exist", c.ActiveProfile)
+	}
+	return nil
+}
+
+func ValidateListenAddress(listen string) error {
+	host, portText, err := net.SplitHostPort(strings.TrimSpace(listen))
+	if err != nil {
+		return fmt.Errorf("invalid listen address %q: expected host:port, for example 127.0.0.1:8787 or :8787", listen)
+	}
+	if strings.ContainsAny(host, " \t\r\n") {
+		return fmt.Errorf("invalid listen address %q: host must not contain whitespace", listen)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("invalid listen address %q: port must be between 1 and 65535", listen)
 	}
 	return nil
 }

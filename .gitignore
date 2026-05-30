@@ -8,6 +8,7 @@ dist/
 coverage.txt
 vendor/
 ocgt-launch.log
+/settings.json
 
 .alma-snapshots
 .claude/

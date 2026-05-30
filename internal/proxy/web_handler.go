@@ -1,17 +1,18 @@
 package proxy
 
 import (
-	"embed"
 	"io/fs"
 	"net/http"
 	"strings"
 )
 
-//go:embed web/*
-var webAssets embed.FS
-
 func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {
-	subFS, err := fs.Sub(webAssets, "web")
+	if s.webAssets == nil {
+		http.Error(w, "Web assets not available", http.StatusNotFound)
+		return
+	}
+
+	subFS, err := fs.Sub(*s.webAssets, "frontend")
 	if err != nil {
 		http.Error(w, "Internal asset error", http.StatusInternalServerError)
 		return

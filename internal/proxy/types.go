@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"embed"
 	"log"
 	"net/http"
 	"sync"
@@ -39,9 +40,11 @@ type Server struct {
 	configPath string
 	client     *http.Client
 	upstream   string
+	webAssets  *embed.FS
 
 	configMu    sync.RWMutex // Protects config, upstream, and client.Timeout
 	rateLimiter *rateLimiter
+	rpmLimiter  *rpmLimiter
 
 	reasoningMu     sync.Mutex
 	reasoningByTool map[string]string
@@ -197,7 +200,11 @@ type anthropicErrorResponse struct {
 	Error anthropicError `json:"error"`
 }
 
-func New(cfg config.Config) (*Server, error) {
+func New(cfg config.Config, webAssets ...*embed.FS) (*Server, error) {
+	var assets *embed.FS
+	if len(webAssets) > 0 {
+		assets = webAssets[0]
+	}
 	transport := &http.Transport{
 		MaxIdleConns:          100,
 		MaxIdleConnsPerHost:   100,
@@ -211,9 +218,11 @@ func New(cfg config.Config) (*Server, error) {
 		upstream:            cfg.Upstream,
 		client:              &http.Client{Timeout: cfg.RequestTimeout(), Transport: transport},
 		rateLimiter:         newRateLimiter(cfg.RateLimit()),
+		rpmLimiter:          newRpmLimiter(cfg.RateLimitPerMinute),
 		reasoningByTool:     map[string]string{},
 		consecutiveFailures: map[string]int{},
 		trippedUntil:        map[string]time.Time{},
+		webAssets:           assets,
 	}, nil
 }
 
@@ -239,6 +248,9 @@ func (s *Server) ApplyConfig(cfg config.Config) {
 	}
 	if s.rateLimiter != nil {
 		s.rateLimiter.setLimits(cfg.RateLimit())
+	}
+	if s.rpmLimiter != nil {
+		s.rpmLimiter.setLimit(cfg.RateLimitPerMinute)
 	}
 }
 
