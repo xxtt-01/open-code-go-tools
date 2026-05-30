@@ -46,6 +46,23 @@ let MODEL_REGISTRY = [
 
 ];
 
+try {
+    const savedModels = localStorage.getItem('synced_models');
+    if (savedModels) {
+        const parsed = JSON.parse(savedModels);
+        if (Array.isArray(parsed)) {
+            const existingIds = new Set(MODEL_REGISTRY.map(m => m.id));
+            for (const nm of parsed) {
+                if (!existingIds.has(nm.id)) {
+                    MODEL_REGISTRY.push(nm);
+                    existingIds.add(nm.id);
+                }
+            }
+        }
+    }
+} catch (e) {
+    console.error('Failed to load synced models from local storage', e);
+}
 
 
 // Default recommended model per mapping slot (overridden by config if set)
@@ -936,12 +953,15 @@ function cacheDom() {
                     // Keep original recommended models if not in the list, or just append new ones
                     const existingIds = new Set(MODEL_REGISTRY.map(m => m.id));
                     let added = 0;
+                    const syncedToSave = [];
                     for (const nm of newModels) {
                         if (!existingIds.has(nm.id)) {
                             MODEL_REGISTRY.push(nm);
                             added++;
                         }
+                        syncedToSave.push(nm);
                     }
+                    localStorage.setItem('synced_models', JSON.stringify(syncedToSave));
                     populateModelSelects();
                     showToast(`同步成功，新增 ${added} 个模型`);
                 }
