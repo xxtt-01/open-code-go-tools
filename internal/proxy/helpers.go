@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -217,21 +218,16 @@ func requestLogger(next http.Handler) http.Handler {
 
 // isLocalhostOrigin checks if an origin is a localhost address
 func isLocalhostOrigin(origin string) bool {
-	// Allow common localhost patterns
-	localhostPatterns := []string{
-		"http://localhost",
-		"http://127.0.0.1",
-		"http://0.0.0.0",
-		"http://wails.localhost",
-		"https://wails.localhost",
-		"wails://",
+	// Allow non-HTTP origins (wails://)
+	if strings.HasPrefix(origin, "wails://") || strings.HasPrefix(origin, "http://wails.localhost") || strings.HasPrefix(origin, "https://wails.localhost") {
+		return true
 	}
-	for _, pattern := range localhostPatterns {
-		if strings.HasPrefix(origin, pattern) {
-			return true
-		}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
 	}
-	return false
+	host := u.Hostname()
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 // authMiddleware checks for local auth token if configured

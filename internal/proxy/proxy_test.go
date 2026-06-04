@@ -285,10 +285,10 @@ func TestHealthEndpoint(t *testing.T) {
 		t.Fatalf("health endpoint returned %d", rr.Code)
 	}
 	var result map[string]string
-	if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
-		t.Fatal(err)
-	}
-	if result["status"] != "ok" {
+		if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result["status"] != "ok" {
 		t.Fatalf("expected status ok, got %q", result["status"])
 	}
 }
@@ -345,7 +345,9 @@ func TestProfileEndpoint_CustomHeader(t *testing.T) {
 		t.Fatalf("profile endpoint returned %d", rr.Code)
 	}
 	var result map[string]string
-	json.Unmarshal(rr.Body.Bytes(), &result)
+		if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
 	if result["active_profile"] != "custom" {
 		t.Fatalf("expected custom profile, got %q", result["active_profile"])
 	}
@@ -620,8 +622,9 @@ func TestUpstreamErrorHistoryIncludesReason(t *testing.T) {
 	if rr.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502, got %d", rr.Code)
 	}
-	if len(srv.history) != 1 {
-		t.Fatalf("history len = %d", len(srv.history))
+	// 6 retry attempts → 6 history entries, newest first
+	if len(srv.history) != 6 {
+		t.Fatalf("history len = %d (expected 6 for 6 retry attempts)", len(srv.history))
 	}
 	if srv.history[0].Error != "upstream temporarily unavailable" {
 		t.Fatalf("history error = %q", srv.history[0].Error)
@@ -1289,7 +1292,7 @@ func TestOpenAIToAnthropicUsesFallbackInputTokens(t *testing.T) {
 func TestStreamOpenAIAsAnthropicIncludesInputTokens(t *testing.T) {
 	body := strings.NewReader("data: {\"id\":\"chatcmpl_1\",\"model\":\"kimi-k2.6\",\"choices\":[{\"delta\":{\"content\":\"ok\"}}],\"usage\":{\"completion_tokens\":2}}\n\ndata: [DONE]\n\n")
 	rr := httptest.NewRecorder()
-	outputTokens := streamOpenAIAsAnthropic(rr, body, "kimi-k2.6", 77, nil)
+	outputTokens, _, _, _ := streamOpenAIAsAnthropic(rr, body, "kimi-k2.6", 77, nil)
 	if outputTokens != 2 {
 		t.Fatalf("output tokens = %d, want 2", outputTokens)
 	}
@@ -1616,23 +1619,25 @@ func TestAnthropicBetaHeaderForwarding(t *testing.T) {
 
 // ----- Fallback Chain and Circuit Breaker tests -----
 
-func TestFallbackChain(t *testing.T) {
-	var modelsCalled []string
+func TestRetryMechanism(t *testing.T) {
+	// Test: model fails initially then succeeds on retry
+	var attemptCount int
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req openAIRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		modelsCalled = append(modelsCalled, req.Model)
+		attemptCount++
 
-		if req.Model == "failed-model" {
+		if req.Model == "flakey-model" && attemptCount <= 2 {
+			// Fail first 2 attempts, succeed on 3rd
 			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte(`{"error":{"type":"server_error","message":"failed-model is down"}}`))
+			_, _ = w.Write([]byte(`{"error":{"type":"server_error","message":"temp down"}}`))
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"chatcmpl_1","model":"fallback-model","choices":[{"message":{"content":"fallback success"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`))
+		_, _ = w.Write([]byte(`{"id":"chatcmpl_1","model":"flakey-model","choices":[{"message":{"content":"success","finish_reason":"stop","role":"assistant"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`))
 	}))
 	defer upstream.Close()
 
@@ -1642,9 +1647,8 @@ func TestFallbackChain(t *testing.T) {
 		ActiveProfile: "test",
 		Profiles: map[string]config.Profile{
 			"test": {
-				APIKey:        "test-key",
-				DefaultModel:  "failed-model",
-				FallbackChain: []string{"fallback-model"},
+				APIKey:       "test-key",
+				DefaultModel: "flakey-model",
 			},
 		},
 	})
@@ -1652,34 +1656,18 @@ func TestFallbackChain(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := []byte(`{"model":"failed-model","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`)
+	body := []byte(`{"model":"flakey-model","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+		t.Fatalf("expected 200 after retries, got %d: %s", rr.Code, rr.Body.String())
 	}
 
-	var result map[string]any
-	if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
-		t.Fatal(err)
-	}
-	contentList, _ := result["content"].([]any)
-	if len(contentList) == 0 {
-		t.Fatalf("empty content in response: %v", result)
-	}
-	textMap, _ := contentList[0].(map[string]any)
-	if textMap["text"] != "fallback success" {
-		t.Fatalf("expected 'fallback success', got %q", textMap["text"])
-	}
-
-	if len(modelsCalled) != 2 {
-		t.Fatalf("expected 2 models called, got %v", modelsCalled)
-	}
-	if modelsCalled[0] != "failed-model" || modelsCalled[1] != "fallback-model" {
-		t.Fatalf("unexpected call sequence: %v", modelsCalled)
+	if attemptCount != 3 {
+		t.Fatalf("expected 3 attempts (2 fails + 1 success), got %d", attemptCount)
 	}
 }
 

@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>流量监控页 — 优化方案设计</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Inter',-apple-system,'PingFang SC',sans-serif; background:#f8f9fc; color:#1a1d28; padding:40px 24px; -webkit-font-smoothing:antialiased; }
+  .container { max-width:960px; margin:0 auto; }
+  h1 { font-size:30px; font-weight:700; letter-spacing:-0.5px; margin-bottom:8px; }
+  .subtitle { color:#5b6276; font-size:15px; margin-bottom:40px; }
+  .subtitle span { display:block; color:#8e95a9; font-size:13px; }
+  section { margin-bottom:36px; }
+  .card { background:#fff; border:1px solid #e2e6ee; border-radius:10px; padding:28px 32px; margin-bottom:16px; }
+  .card h2 { font-size:17px; font-weight:600; margin-bottom:16px; display:flex; align-items:center; gap:8px; }
+  .card h2 .tag { font-size:11px; font-weight:600; padding:2px 10px; border-radius:10px; margin-left:8px; }
+  .tag-frontend { background:#eef2ff; color:#3b6eff; }
+  .tag-backend { background:#e8f8ee; color:#0f973d; }
+  .tag-data { background:#fef4e6; color:#b8690f; }
+  .card h3 { font-size:14px; font-weight:600; margin:16px 0 8px; }
+  .card p, .card li { color:#5b6276; font-size:14px; line-height:1.7; }
+  .card ul { list-style:none; padding:0; }
+  .card li { padding:4px 0 4px 18px; position:relative; }
+  .card li::before { content:''; position:absolute; left:4px; top:13px; width:5px; height:5px; border-radius:50%; background:#8e95a9; }
+  .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:640px) { .grid-2 { grid-template-columns:1fr; } }
+  .mockup { background:#0d1117; border-radius:8px; padding:20px; margin:12px 0; font-size:13px; color:#c9d1d9; }
+  .mockup .chart-area { height:160px; background:#161b22; border:1px solid #30363d; border-radius:6px; display:flex; align-items:center; justify-content:center; color:#8b949e; }
+  .mockup .row { display:flex; gap:12px; margin:8px 0; }
+  .mockup .box { background:#161b22; border:1px solid #30363d; border-radius:6px; padding:12px 16px; flex:1; }
+  .mockup .box .num { font-size:22px; font-weight:700; color:#3fb950; }
+  .mockup .box .lbl { font-size:12px; color:#8b949e; }
+  table { width:100%; border-collapse:collapse; font-size:14px; margin-top:8px; }
+  th { text-align:left; font-weight:600; color:#5b6276; font-size:12px; text-transform:uppercase; letter-spacing:0.5px; padding:8px 12px; border-bottom:2px solid #e2e6ee; }
+  td { padding:8px 12px; border-bottom:1px solid #e2e6ee; color:#5b6276; vertical-align:top; }
+  .badge { display:inline-block; font-size:11px; font-weight:600; padding:2px 10px; border-radius:10px; }
+  .badge-easy { background:#e8f8ee; color:#0f973d; }
+  .badge-medium { background:#fef4e6; color:#b8690f; }
+  .badge-hard { background:#fcf0f1; color:#d63638; }
+  .sep { border:0; border-top:1px solid #e2e6ee; margin:24px 0; }
+  footer { text-align:center; padding:24px 0; color:#8e95a9; font-size:13px; border-top:1px solid #e2e6ee; }
+  @media (prefers-color-scheme:dark) {
+    body { background:#0d1117; color:#e6edf3; }
+    .card { background:#161b22; border-color:#30363d; }
+    .card p, .card li { color:#8b949e; }
+    th { color:#8b949e; border-bottom-color:#30363d; }
+    td { border-bottom-color:#30363d; color:#8b949e; }
+    .tag-frontend { background:#1a2333; }
+    .tag-backend { background:#132b1f; }
+    .tag-data { background:#2a1f0e; }
+    .sep { border-top-color:#30363d; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>流量监控页 · 优化设计方案</h1>
+  <p class="subtitle">基于 ocgt v2.0.2 现有数据模型，重新设计流量监控页面<span>Traffic Monitoring Page Redesign — Feature-Rich &amp; Visually Modern</span></p>
+
+  <section>
+    <div class="card">
+      <h2>📊 现状分析</h2>
+      <p>当前流量监控页 (src/view-history) 的数据流与展示方式：</p>
+      <div class="mockup" style="margin:16px 0;">
+        <div style="font-size:12px;color:#8b949e;margin-bottom:12px;">当前页面渲染结构</div>
+        <div class="row">
+          <div class="box"><div class="lbl">总请求</div><div class="num" style="color:#58a6ff;">128</div></div>
+          <div class="box"><div class="lbl">成功率</div><div class="num" style="color:#3fb950;">99.2%</div></div>
+          <div class="box"><div class="lbl">平均延时</div><div class="num">1.2s</div></div>
+          <div class="box"><div class="lbl">Token</div><div class="num" style="color:#e3b341;">45K</div></div>
+          <div class="box"><div class="lbl">RPM 限制</div><div class="num" style="color:#8b949e;">100</div></div>
+        </div>
+        <div style="margin-top:12px;padding:12px;background:#161b22;border:1px solid #30363d;border-radius:6px;">
+          <div style="font-size:12px;color:#8b949e;">明细表格: 9 列 × N 行 (来源/模型/耗时/Token)</div>
+        </div>
+      </div>
+      <table>
+        <tr><th>当前能力</th><th>数据来源</th><th>局限</th></tr>
+        <tr><td>5 个统计卡片</td><td>内存 history[100]</td><td>只有最近 100 条，无时间维度</td></tr>
+        <tr><td>Token 比例条</td><td>内存 history[100]</td><td>只有 Input/Output 比例，无趋势</td></tr>
+        <tr><td>请求明细表格</td><td>内存 history[100]</td><td>只能按来源筛选，不支持搜索/分页</td></tr>
+        <tr><td>Token 消耗数字</td><td>内存汇总</td><td>看不到按模型/客户端的细分</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="card">
+      <h2>🎯 设计目标</h2>
+      <div class="grid-2">
+        <div>
+          <h3>数据维度 —— 从内存到全量</h3>
+          <ul>
+            <li>内存 history[100] 保留做实时展示</li>
+            <li>新增 <code>GET /ocgt/api/stats</code> 读取 JSONL 日志</li>
+            <li>支持今日 / 7天 / 30天 / 自定义时间范围</li>
+          </ul>
+        </div>
+        <div>
+          <h3>可视化 —— 从数字到图表</h3>
+          <ul>
+            <li>Token 消耗趋势折线图 (每日)</li>
+            <li>请求量柱状图 + 成功率叠加</li>
+            <li>模型分布环形图</li>
+            <li>客户端来源玫瑰图</li>
+          </ul>
+        </div>
+        <div>
+          <h3>交互 —— 从静态到动态</h3>
+          <ul>
+            <li>时间范围选择器 (今日/7天/30天/自定义)</li>
+            <li>多维度下钻 (点击模型 → 只看该模型)</li>
+            <li>搜索 + 高级筛选</li>
+          </ul>
+        </div>
+        <div>
+          <h3>导出 —— 从只看不能拿</h3>
+          <ul>
+            <li>CSV 导出 (表格数据)</li>
+            <li>JSON 导出 (原始数据)</li>
+            <li>支持当前筛选结果导出</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="card">
+      <h2>🏗️ 后端新 API 设计</h2>
+      <table>
+        <tr><th style="width:35%">端点</th><th>用途</th><th>数据来源</th></tr>
+        <tr><td><code>GET /ocgt/api/stats/summary?days=7</code></td><td>时间范围内的汇总统计</td><td>JSONL 日志</td></tr>
+        <tr><td><code>GET /ocgt/api/stats/trend?days=30</code></td><td>每日 Token/请求趋势</td><td>JSONL 日志</td></tr>
+        <tr><td><code>GET /ocgt/api/stats/models?days=7</code></td><td>按模型分组统计</td><td>JSONL 日志</td></tr>
+        <tr><td><code>GET /ocgt/api/stats/clients?days=7</code></td><td>按客户端分组统计</td><td>JSONL 日志</td></tr>
+        <tr><td><code>GET /ocgt/api/history?offset=0&limit=50&search=&model=&client=&status=</code></td><td>带筛选/分页的历史查询</td><td>内存 + JSONL</td></tr>
+        <tr><td><code>POST /ocgt/api/export?format=csv</code></td><td>导出筛选结果</td><td>JSONL 日志</td></tr>
+      </table>
+
+      <h3 style="margin-top:20px;">核心数据结构: /api/stats/summary 响应</h3>
+      <div class="mockup">
+        <pre style="font-size:12px;line-height:1.6;color:#c9d1d9;">{
+  "period": { "from": "2026-05-26", "to": "2026-06-02" },
+  "summary": {
+    "total_requests": 1847,
+    "success_rate": 98.3,
+    "avg_latency_ms": 1240,
+    "total_tokens": 2847350,
+    "total_input_tokens": 1520300,
+    "total_output_tokens": 1327050,
+    "total_cache_hit": 84200
+  },
+  "models": [
+    { "name": "deepseek-v4-pro", "requests": 823, "tokens": 1520000, "pct": 53.4 },
+    { "name": "kimi-k2.6",      "requests": 521, "tokens": 890000,  "pct": 31.2 }
+  ],
+  "clients": [
+    { "name": "终端 CLI", "requests": 1200, "pct": 65.0 },
+    { "name": "VS Code",  "requests": 647,  "pct": 35.0 }
+  ]
+}</pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="card">
+      <h2>📐 页面布局设计</h2>
+
+      <h3>第一屏：全局概览 (Top Stats Row)</h3>
+      <div class="mockup">
+        <div class="row">
+          <div class="box"><div class="lbl">时间范围</div><div style="font-size:13px;color:#58a6ff;margin-top:4px;">今日 ▾</div></div>
+          <div class="box"><div class="lbl">总请求</div><div class="num" style="color:#58a6ff;">1,847</div><div class="lbl">较昨日 +12%</div></div>
+          <div class="box"><div class="lbl">成功率</div><div class="num" style="color:#3fb950;">98.3%</div><div class="lbl">失败 31 次</div></div>
+          <div class="box"><div class="lbl">Avg 延迟</div><div class="num" style="color:#e3b341;">1.24s</div><div class="lbl">P99: 4.2s</div></div>
+          <div class="box"><div class="lbl">Token 消耗</div><div class="num" style="color:#d29922;">2.8M</div><div class="lbl">估算 $1.42</div></div>
+        </div>
+      </div>
+      <p style="margin-top:8px;font-size:13px;">相对于现在的 5 个卡片，增加<strong>时间范围选择器</strong>、<strong>环比变化</strong>、<strong>P99 延迟</strong>、<strong>Cost 估算</strong>。</p>
+
+      <h3>第二屏：趋势图表</h3>
+      <div class="mockup">
+        <div style="display:flex;gap:16px;">
+          <div style="flex:2;">
+            <div style="font-size:12px;color:#8b949e;margin-bottom:8px;">Token 消耗趋势 (近 7 天)</div>
+            <div class="chart-area">📈 折线图: 每日 Input / Output / Total</div>
+          </div>
+          <div style="flex:1;">
+            <div style="font-size:12px;color:#8b949e;margin-bottom:8px;">模型分布</div>
+            <div class="chart-area" style="height:160px;">🥧 环形图</div>
+          </div>
+        </div>
+      </div>
+
+      <h3>第三屏：Token 深度分析</h3>
+      <div class="mockup">
+        <div style="font-size:12px;color:#8b949e;margin-bottom:8px;">按模型 Token 消耗明细</div>
+        <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:16px;">
+          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #30363d;font-size:12px;color:#8b949e;">
+            <span style="flex:2;">模型</span><span style="flex:1;text-align:right;">请求数</span><span style="flex:1;text-align:right;">Input</span><span style="flex:1;text-align:right;">Output</span><span style="flex:1;text-align:right;">Cache</span><span style="flex:1;text-align:right;">总计</span><span style="flex:1;text-align:right;">占比</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #21262d;font-size:13px;">
+            <span style="flex:2;color:#3fb950;">deepseek-v4-pro</span><span style="flex:1;text-align:right;">823</span><span style="flex:1;text-align:right;">812K</span><span style="flex:1;text-align:right;">708K</span><span style="flex:1;text-align:right;">42K</span><span style="flex:1;text-align:right;">1.5M</span><span style="flex:1;text-align:right;">53%</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:10px 0;font-size:13px;">
+            <span style="flex:2;color:#58a6ff;">kimi-k2.6</span><span style="flex:1;text-align:right;">521</span><span style="flex:1;text-align:right;">470K</span><span style="flex:1;text-align:right;">420K</span><span style="flex:1;text-align:right;">0</span><span style="flex:1;text-align:right;">890K</span><span style="flex:1;text-align:right;">31%</span>
+          </div>
+        </div>
+      </div>
+
+      <h3>第四屏：请求明细 (增强表格)</h3>
+      <div class="mockup" style="margin-bottom:12px;">
+        <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
+          <input placeholder="🔍 搜索模型/路径..." style="flex:1;min-width:200px;padding:6px 12px;background:#161b22;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;">
+          <select style="padding:6px 12px;background:#161b22;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;"><option>全部来源</option></select>
+          <select style="padding:6px 12px;background:#161b22;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;"><option>全部状态</option></select>
+          <span style="font-size:12px;color:#8b949e;padding:6px 0;">第 1/37 页</span>
+        </div>
+        <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;overflow:hidden;">
+          <table style="width:100%;font-size:12px;border-collapse:collapse;">
+            <tr style="background:#1c2128;"><th style="padding:8px 10px;color:#8b949e;border-bottom:1px solid #30363d;">时间</th><th style="padding:8px 10px;color:#8b949e;border-bottom:1px solid #30363d;">模型</th><th style="padding:8px 10px;color:#8b949e;border-bottom:1px solid #30363d;">来源</th><th style="padding:8px 10px;color:#8b949e;border-bottom:1px solid #30363d;">耗时</th><th style="padding:8px 10px;color:#8b949e;border-bottom:1px solid #30363d;">状态</th><th style="padding:8px 10px;color:#8b949e;border-bottom:1px solid #30363d;">Token</th></tr>
+            <tr><td style="padding:6px 10px;border-bottom:1px solid #21262d;">14:23:01</td><td style="padding:6px 10px;border-bottom:1px solid #21262d;">deepseek-v4-pro</td><td style="padding:6px 10px;border-bottom:1px solid #21262d;">CLI</td><td style="padding:6px 10px;border-bottom:1px solid #21262d;">2.3s</td><td style="padding:6px 10px;border-bottom:1px solid #21262d;"><span style="color:#3fb950;">200</span></td><td style="padding:6px 10px;border-bottom:1px solid #21262d;">4,892</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="card">
+      <h2>📋 实现优先级</h2>
+      <table>
+        <tr><th style="width:8%">优先级</th><th style="width:28%">功能</th><th>说明</th><th style="width:12%">预估工时</th></tr>
+        <tr>
+          <td><span class="badge badge-easy">P0</span></td>
+          <td><strong>/api/stats 后端 API</strong></td>
+          <td>从 JSONL 日志读取并汇总统计：总数/成功率/Token/模型/客户端</td>
+          <td>~60 行 Go</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-easy">P0</span></td>
+          <td><strong>时间范围选择器</strong></td>
+          <td>今日 / 7天 / 30天 / 自定义，切换时重新请求数据</td>
+          <td>~40 行 JS + HTML</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-easy">P1</span></td>
+          <td><strong>Token 趋势折线图</strong></td>
+          <td>使用 Chart.js 绘制每日 Input/Output/Total 折线</td>
+          <td>~50 行 JS</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-medium">P1</span></td>
+          <td><strong>模型分布环形图</strong></td>
+          <td>各模型 Token 占比 + 请求数占比</td>
+          <td>~40 行 JS</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-medium">P1</span></td>
+          <td><strong>按模型 Token 明细表</strong></td>
+          <td>类似 opencode-tui-usage 的 tokens-usage 组件风格</td>
+          <td>~50 行 JS</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-medium">P2</span></td>
+          <td><strong>请求表格增强</strong></td>
+          <td>分页、搜索框、状态筛选、点击表头排序</td>
+          <td>~80 行 JS</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-hard">P2</span></td>
+          <td><strong>CSV/JSON 导出</strong></td>
+          <td>后端新增 /api/export，前端导出按钮</td>
+          <td>~40 行 Go + 20 行 JS</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-hard">P3</span></td>
+          <td><strong>请求量柱状图 + 成功率叠加</strong></td>
+          <td>双 Y 轴，每日请求数 + 成功率百分比</td>
+          <td>~50 行 JS</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-hard">P3</span></td>
+          <td><strong>客户端来源分析</strong></td>
+          <td>CLI / VS Code / Desktop 的请求占比 + Token 占比</td>
+          <td>~30 行 JS</td>
+        </tr>
+      </table>
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <section>
+    <div class="card">
+      <h2>🔧 关键技术决策</h2>
+      <div class="grid-2">
+        <div>
+          <h3>图表库</h3>
+          <p><strong>Chart.js v4</strong> — 轻量 (70KB)、零依赖、中文文档完善、支持折线/柱状/环形图。从 CDN 加载，无需 npm 构建。</p>
+        </div>
+        <div>
+          <h3>JSONL 读取策略</h3>
+          <p>每日文件 `ocgt-*.jsonl` 逐行读取，按时间范围过滤。一天 ~500KB × 30天 = ~15MB，全读入内存后再聚合，Go 处理 < 200ms。</p>
+        </div>
+        <div>
+          <h3>前端状态管理</h3>
+          <p>当前使用全局变量 + DOM 直接操作。新增 Chart.js 实例存储在全局，切换时间范围时 `chart.destroy()` + 重建。</p>
+        </div>
+        <div>
+          <h3>Cost 估算</h3>
+          <p>根据模型价格表（hardcode 常见模型 $/1K tokens）估算花费。标注 "估算" 避免误导。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="card">
+      <h2>📁 后端新增文件结构</h2>
+      <div style="background:#f8f9fc;border:1px solid #e2e6ee;border-radius:6px;padding:16px;font-family:monospace;font-size:13px;line-height:1.8;">
+        internal/proxy/stats.go  ← 新增：统计数据查询 API<br>
+        &nbsp;&nbsp;func (s *Server) apiStatsSummary(w, r)<br>
+        &nbsp;&nbsp;func (s *Server) apiStatsTrend(w, r)<br>
+        &nbsp;&nbsp;func (s *Server) apiStatsModels(w, r)<br>
+        &nbsp;&nbsp;func readJSONLLogs(dir string, days int) []requestLogEntry<br>
+        &nbsp;&nbsp;func aggregateStats(entries []requestLogEntry) *StatsSummary
+      </div>
+      <p style="margin-top:12px;font-size:13px;">保持 <code>handler.go</code> 不膨胀，统计逻辑独立到 <code>stats.go</code>。</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="card">
+      <h2>📐 视觉风格参考</h2>
+      <p>流量监控页将采用与现有 ocgt 仪表盘一致的设计语言：</p>
+      <ul>
+        <li><strong>配色</strong> — 沿用现有 accent color (#3b6eff)，Token 相关用绿色系 (#3fb950)，错误用红色系 (#d63638)</li>
+        <li><strong>暗色优先</strong> — 默认深色背景，与 Chart.js 深色主题一致</li>
+        <li><strong>图表风格</strong> — Chart.js 使用圆角线条、渐变填充、半透明网格</li>
+        <li><strong>响应式</strong> — 图表在大屏并排展示，小屏堆叠</li>
+        <li><strong>交互细节</strong> — 图表 hover 显示 tooltip，可点击图例切换显示/隐藏系列</li>
+      </ul>
+    </div>
+  </section>
+
+<footer>
+  ocgt v2.0.2 — Traffic Monitoring Redesign Proposal<br>
+  <span style="font-size:12px;">设计文档 · 2026-06-02</span>
+</footer>
+
+</div>
+</body>
+</html>

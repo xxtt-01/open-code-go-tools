@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ethan-blue/open-code-go-tools/internal/config"
+	"github.com/ethan-blue/open-code-go-tools/internal/quota"
 )
 
 const maxReasoningEntries = 1024
@@ -72,6 +73,10 @@ type Server struct {
 	// Tracks in-flight streaming requests for graceful shutdown.
 	// On shutdown, ListenAndServe waits for all tracked requests to complete.
 	wg sync.WaitGroup
+
+	// Quota monitoring — cached quota data from OpenCode Go RPC.
+	quotaData  *quota.QuotaData
+	quotaMu    sync.RWMutex
 }
 
 func (s *Server) SetConfigPath(path string) {
@@ -190,6 +195,15 @@ type openAIUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	// Prompt caching details — 部分上游（如 DeepSeek/Qwen）在 OpenAI 格式中返回
+	PromptTokensDetails *promptTokensDetails `json:"prompt_tokens_details,omitempty"`
+	// Anthropic 原生 cache 字段 — 某些上游在 OpenAI 格式中也返回这些字段
+	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
+}
+
+type promptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
 }
 
 type anthropicError struct {

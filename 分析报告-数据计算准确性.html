@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>数据计算准确性分析报告</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Inter',-apple-system,'PingFang SC',sans-serif; background:#f8f9fc; color:#1a1d28; padding:40px 24px; -webkit-font-smoothing:antialiased; }
+  .container { max-width:960px; margin:0 auto; }
+  h1 { font-size:28px; font-weight:700; margin-bottom:4px; }
+  .subtitle { color:#5b6276; font-size:14px; margin-bottom:32px; }
+  section { margin-bottom:32px; }
+  .card { background:#fff; border:1px solid #e2e6ee; border-radius:10px; padding:24px 28px; margin-bottom:16px; }
+  .card h2 { font-size:17px; font-weight:600; margin-bottom:16px; display:flex; align-items:center; gap:8px; }
+  .card h2 .count { font-size:13px; font-weight:400; color:#8e95a9; }
+  .card h3 { font-size:14px; font-weight:600; margin:18px 0 8px; color:var(--text-primary); }
+  .card p, .card li { color:#5b6276; font-size:14px; line-height:1.7; }
+  .card ul { list-style:none; padding:0; }
+  .card li { padding:4px 0 4px 18px; position:relative; }
+  .card li::before { content:''; position:absolute; left:4px; top:13px; width:5px; height:5px; border-radius:50%; background:#8e95a9; }
+  .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:640px) { .grid-2 { grid-template-columns:1fr; } }
+
+  table { width:100%; border-collapse:collapse; font-size:14px; margin:8px 0; }
+  th { text-align:left; font-weight:600; color:#5b6276; font-size:12px; text-transform:uppercase; letter-spacing:0.5px; padding:8px 12px; border-bottom:2px solid #e2e6ee; }
+  td { padding:8px 12px; border-bottom:1px solid #e2e6ee; color:#5b6276; vertical-align:top; }
+  tr:hover td { background:#f8f9fc; }
+
+  .badge { display:inline-block; font-size:11px; font-weight:600; padding:2px 10px; border-radius:10px; }
+  .badge-green { background:#e8f8ee; color:#0f973d; }
+  .badge-yellow { background:#fef4e6; color:#b8690f; }
+  .badge-red { background:#fcf0f1; color:#d63638; }
+  .badge-blue { background:#eef2ff; color:#3b6eff; }
+  .badge-gray { background:#f0f1f4; color:#5b6276; }
+
+  .flow-box { background:#f8f9fc; border:1px solid #e2e6ee; border-radius:8px; padding:16px 20px; margin:8px 0; font-size:13px; line-height:1.8; font-family:monospace; }
+  .flow-box .arrow { color:#8e95a9; }
+  .tag { font-size:11px; font-weight:600; padding:1px 8px; border-radius:4px; }
+  .tag-acc { background:#e8f8ee; color:#0f973d; }
+  .tag-part { background:#fef4e6; color:#b8690f; }
+  .tag-no { background:#fcf0f1; color:#d63638; }
+
+  .issue-box { border-left:3px solid; padding:12px 16px; margin:12px 0; border-radius:0 6px 6px 0; }
+  .issue-good { border-color:#0f973d; background:#f6fdf9; }
+  .issue-warn { border-color:#b8690f; background:#fefaf2; }
+  .issue-bad { border-color:#d63638; background:#fdf5f5; }
+
+  footer { text-align:center; padding:24px 0; color:#8e95a9; font-size:13px; border-top:1px solid #e2e6ee; margin-top:24px; }
+
+  @media (prefers-color-scheme:dark) {
+    body { background:#0d1117; color:#e6edf3; }
+    .card { background:#161b22; border-color:#30363d; }
+    .card p, .card li { color:#8b949e; }
+    th { color:#8b949e; border-bottom-color:#30363d; }
+    td { border-bottom-color:#30363d; color:#8b949e; }
+    tr:hover td { background:#1c2128; }
+    .flow-box { background:#1c2128; border-color:#30363d; color:#8b949e; }
+    .badge-gray { background:#1c2128; color:#8b949e; }
+    .issue-good { background:#0a2014; }
+    .issue-warn { background:#1f1508; }
+    .issue-bad { background:#200c0c; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>数据计算准确性分析报告</h1>
+  <p class="subtitle">Token 计数 · 请求统计 · Cost 估算 — 单模型与聚合计算的正确性验证</p>
+
+  <section>
+    <div class="card">
+      <h2>一、数据来源与计算链路</h2>
+      <p>每次请求经过代理时，ocgt 记录以下数据链路：</p>
+
+      <div class="flow-box">
+        <b>上游响应</b> (JSON/SSE)<br>
+        <span class="arrow">↓</span> 提取 prompt_tokens / completion_tokens / total_tokens<br>
+        <b>tokenUsage 结构体</b> (converter.go:219)<br>
+        <span class="arrow">↓</span> fallback 修正 (cjk estimate / 减法推定)<br>
+        <b>requestLogEntry</b> (types.go:21)<br>
+        <span class="arrow">↓</span> 写入内存 history[100] + JSONL 日志文件<br>
+        <b>前端渲染</b> (app.js updateTrafficStats)<br>
+        <span class="arrow">↓</span> 求和 / 求平均值 / 比例条<br>
+        <b>用户看到的数据</b>
+      </div>
+
+      <p>关键：<b>上游响应中不包含 monetary cost</b>（花费金额）。任何 Cost 展示都只能是基于模型定价表的<span class="badge badge-yellow">估算</span>。</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="card">
+      <h2>二、逐字段准确性分析</h2>
+      <table>
+        <tr><th>字段</th><th>获取方式</th><th>可信度</th><th>说明</th></tr>
+        <tr>
+          <td><b>input_tokens</b></td>
+          <td>从 upstream 响应提取</td>
+          <td><span class="badge badge-green">✅ 准确</span></td>
+          <td>非流式取 Usage.PromptTokens，流式取 SSE chunk.Usage.PromptTokens，Messages 端点解析 usage.input_tokens</td>
+        </tr>
+        <tr>
+          <td><b>output_tokens</b></td>
+          <td>从 upstream 响应提取</td>
+          <td><span class="badge badge-green">✅ 准确</span></td>
+          <td>同上，取 CompletionTokens / usage.output_tokens</td>
+        </tr>
+        <tr>
+          <td><b>total_tokens</b></td>
+          <td>input + output + cache</td>
+          <td><span class="badge badge-green">✅ 准确</span></td>
+          <td>就是三个字段的求和，数据源头准确则结果准确</td>
+        </tr>
+        <tr>
+          <td><b>cache_creation_tokens</b></td>
+          <td>从 Messages 端点提取</td>
+          <td><span class="badge badge-yellow">⚠️ 部分</span></td>
+          <td>OpenAI 协议始终为 0（架构限制），仅 Anthropic Messages 端点有值</td>
+        </tr>
+        <tr>
+          <td><b>cache_read_tokens</b></td>
+          <td>从 Messages 端点提取</td>
+          <td><span class="badge badge-yellow">⚠️ 部分</span></td>
+          <td>同上</td>
+        </tr>
+        <tr>
+          <td><b>请求总数</b></td>
+          <td>log entries 计数</td>
+          <td><span class="badge badge-green">✅ 准确</span></td>
+          <td>内存 100 条 = 最近 N 条请求的精确计数；JSONL = 时间范围内的精确计数</td>
+        </tr>
+        <tr>
+          <td><b>成功率</b></td>
+          <td>status &lt; 300 比例</td>
+          <td><span class="badge badge-green">✅ 准确</span></td>
+          <td>精确计数</td>
+        </tr>
+        <tr>
+          <td><b>平均延迟</b></td>
+          <td>Duration 求和 / 请求数</td>
+          <td><span class="badge badge-green">✅ 准确</span></td>
+          <td>精确计算</td>
+        </tr>
+        <tr>
+          <td><b>Cost (花费)</b></td>
+          <td>—</td>
+          <td><span class="badge badge-red">❌ 未实现</span></td>
+          <td>上游不返回花费，ocgt 目前未做估算</td>
+        </tr>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="card">
+      <h2>三、当前展示存在的问题</h2>
+
+      <div class="issue-box issue-warn">
+        <b>⚠️ 问题 1：Token 比例条缺少 Cache 分段</b><br>
+        <code>updateTrafficStats</code> 中，分母 totalTokens 包含 cache，但比例条只渲染 input 和 output 两段。当 cache &gt; 0 时，input% + output% &lt; 100%，留下空白段——用户不知道空白代表什么。
+        <div class="flow-box" style="margin-top:8px;">
+          input=100, output=100, cache=50 → total=250<br>
+          input% = 100/250 = 40%<br>
+          output% = 100/250 = 40%<br>
+          ████████████░░░░░░░░░░░░  ← 20% 空白 = Cache，但无颜色标注
+        </div>
+      </div>
+
+      <div class="issue-box issue-warn">
+        <b>⚠️ 问题 2：无按模型的分组统计</b><br>
+        当前所有 token 数据是整个 history 的<b>扁平求和</b>，没有区分模型。deepseek-v4-pro 和 kimi-k2.6 的 token 数混在一起。不同的模型价格不同（deepseek 约 $0.5/M tokens，kimi 约 $1.2/M tokens），混合求和后 Cost 估算会不准。
+        <div class="flow-box" style="margin-top:8px;">
+          当前: totalTokens = 2,847,350 (不分模型)<br>
+          理想: deepseek-v4-pro: 1,520,000 tokens → 估算 $0.76<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; kimi-k2.6: 890,000 tokens → 估算 $1.07<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 合计: 2,410,000 tokens → 估算 $1.83
+        </div>
+      </div>
+
+      <div class="issue-box issue-bad">
+        <b>❌ 问题 3：无 Cost 估算</b><br>
+        完全没有花费展示。Token 数据已经有了，但用户看不到费用信息。对于使用按量计费 (pay-as-you-go) 的用户来说，这是关键信息。
+      </div>
+
+      <div class="issue-box issue-warn">
+        <b>⚠️ 问题 4：前端仅用内存 100 条，不读 JSONL</b><br>
+        updateTrafficStats 只计算内存 history[100] 的数据。JSONL 日志文件里存了全部历史，但没有 API 去读。这意味着用户看到的 Token 总和可能严重偏低（流量大时 100 条很快就被覆盖了）。
+      </div>
+
+      <div class="issue-box issue-good">
+        <b>✅ 没有问题的字段：</b><br>
+        input_tokens、output_tokens、请求总数、成功率、平均延迟——这些计算逻辑正确，数据源准确，展示清晰。
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="card">
+      <h2>四、Cost 估算方案</h2>
+      <p>上游 API 不返回花费金额，但可以基于 token 数和模型定价表来估算。</p>
+
+      <h3>模型定价参考表</h3>
+      <table>
+        <tr><th>模型</th><th>Input $/1M tokens</th><th>Output $/1M tokens</th><th>数据来源</th></tr>
+        <tr><td>deepseek-v4-pro</td><td>$0.50</td><td>$1.00</td><td>官方定价</td></tr>
+        <tr><td>deepseek-v4-flash</td><td>$0.10</td><td>$0.20</td><td>官方定价</td></tr>
+        <tr><td>kimi-k2.6</td><td>$1.20</td><td>$2.40</td><td>参考定价</td></tr>
+        <tr><td>qwen3.6-plus</td><td>$0.80</td><td>$1.60</td><td>参考定价</td></tr>
+        <tr><td>glm-5.1</td><td>$0.60</td><td>$1.20</td><td>参考定价</td></tr>
+        <tr><td>其他/未知模型</td><td>$1.00</td><td>$2.00</td><td>保守默认值</td></tr>
+      </table>
+
+      <h3>计算方式</h3>
+      <div class="flow-box">
+        cost = (input_tokens / 1,000,000) × input_price + (output_tokens / 1,000,000) × output_price
+      </div>
+      <p style="margin-top:8px;">需要 <b>按模型分别计算再求和</b>，不能把所有模型的 token 混在一起算，否则价格差异会导致误差。</p>
+
+      <div class="issue-box issue-good">
+        <b>展示建议：</b><br>
+        - 明确标注 "估算" 或 "≈"<br>
+        - 显示估算区间：按模型分别计算，然后求和<br>
+        - 鼠标悬停显示各模型的花费明细
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="card">
+      <h2>五、单模型 vs 多模型：正确的计算逻辑</h2>
+      <table>
+        <tr><th>场景</th><th>做法</th><th>当前状态</th></tr>
+        <tr>
+          <td><b>请求数</b></td>
+          <td>直接计数，不分模型</td>
+          <td><span class="badge badge-green">✅ 正确</span></td>
+        </tr>
+        <tr>
+          <td><b>Token 总计</b></td>
+          <td>所有模型的 Input + Output + Cache 全量求和</td>
+          <td><span class="badge badge-green">✅ 正确</span></td>
+        </tr>
+        <tr>
+          <td><b>Token 按模型</b></td>
+          <td>按 model 分组后分别求和</td>
+          <td><span class="badge badge-red">❌ 未实现</span></td>
+        </tr>
+        <tr>
+          <td><b>成功率</b></td>
+          <td>status 2xx / 总数，不分模型</td>
+          <td><span class="badge badge-green">✅ 正确</span></td>
+        </tr>
+        <tr>
+          <td><b>平均延迟</b></td>
+          <td>总耗时 / 请求数</td>
+          <td><span class="badge badge-green">✅ 正确</span></td>
+        </tr>
+        <tr>
+          <td><b>Cost 估算</b></td>
+          <td>按模型分别算再求和 —— 因为各模型单价不同</td>
+          <td><span class="badge badge-red">❌ 未实现</span></td>
+        </tr>
+        <tr>
+          <td><b>Cache 占比</b></td>
+          <td>cache / total_tokens，按模型展示更有意义</td>
+          <td><span class="badge badge-yellow">⚠️ 有数据但无展示</span></td>
+        </tr>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="card">
+      <h2>六、优化建议汇总</h2>
+      <table>
+        <tr><th style="width:5%">P</th><th style="width:30%">改进项</th><th>原因</th><th style="width:12%">工作量</th></tr>
+        <tr>
+          <td><span class="badge badge-green">P0</span></td>
+          <td><b>新增 /api/stats 读取 JSONL</b></td>
+          <td>解决内存 100 条限制，获得全量数据</td>
+          <td>~60 行 Go</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-green">P0</span></td>
+          <td><b>按模型分组统计</b></td>
+          <td>多模型混算影响 Cost 准确性和可读性</td>
+          <td>~40 行 JS</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">P1</span></td>
+          <td><b>Cost 估算</b></td>
+          <td>用户需要知道花费，模型定价表 + 按模型计算即可</td>
+          <td>~30 行 JS</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">P1</span></td>
+          <td><b>Token 比例条增加 Cache 段</b></td>
+          <td>当前比例条缺少 Cache 显示，占比不完整</td>
+          <td>~10 行 CSS + JS</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">P1</span></td>
+          <td><b>趋势图：每日 Token 消耗</b></td>
+          <td>看清用量是增长还是下降</td>
+          <td>~50 行 JS</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-gray">P2</span></td>
+          <td><b>高延迟请求分布</b></td>
+          <td>P50 / P95 / P99 延迟分析</td>
+          <td>~30 行 JS</td>
+        </tr>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="card">
+      <h2>总结</h2>
+      <div class="grid-2">
+        <div class="issue-box issue-good">
+          <b>✅ 计算准确的部分</b>
+          <ul style="margin-top:8px;">
+            <li>input_tokens / output_tokens （依赖上游准确）</li>
+            <li>请求总数、成功率、平均延迟</li>
+            <li>total_tokens 求和</li>
+          </ul>
+        </div>
+        <div class="issue-box issue-warn">
+          <b>⚠️ 需要改进的部分</b>
+          <ul style="margin-top:8px;">
+            <li>按模型分组统计（缺失）</li>
+            <li>Cost 估算（未实现）</li>
+            <li>Cache 占比展示（比例条缺少一段）</li>
+            <li>JSONL 日志读取（仅用内存 100 条）</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+<footer>
+  ocgt v2.0.2 — 数据准确性分析 · 2026-06-02
+</footer>
+</div>
+</body>
+</html>

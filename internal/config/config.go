@@ -57,6 +57,8 @@ type Profile struct {
 	MessageModels []string          `json:"message_models,omitempty"` // Models using Anthropic native endpoint (bypass OpenAI conversion)
 	FallbackChain []string          `json:"fallback_chain,omitempty"` // Automatic fallback models on failure
 	Headers       map[string]string `json:"headers,omitempty"`        // Custom headers for upstream requests
+	QuotaCookie   string            `json:"quota_cookie,omitempty"`   // OpenCode Go auth cookie for quota display
+	QuotaWorkspaceID string        `json:"quota_workspace_id,omitempty"` // OpenCode Go workspace ID for quota display
 }
 
 func DefaultPath() (string, error) {
@@ -93,6 +95,8 @@ func Example() Config {
 		},
 		MessageModels: []string{"minimax-m2.5", "minimax-m2.7"},
 		FallbackChain: []string{"kimi-k2.6", "qwen3.6-plus", "deepseek-v4-flash"},
+		QuotaCookie:      "${OPENCODE_GO_AUTH_COOKIE}",
+		QuotaWorkspaceID: "${OPENCODE_GO_WORKSPACE_ID}",
 	}
 	return Config{
 		Version:                 CurrentConfigVersion,

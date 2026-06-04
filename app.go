@@ -21,6 +21,7 @@ import (
 	"github.com/ethan-blue/open-code-go-tools/internal/config"
 	"github.com/ethan-blue/open-code-go-tools/internal/preferences"
 	"github.com/ethan-blue/open-code-go-tools/internal/proxy"
+	"github.com/ethan-blue/open-code-go-tools/internal/quota"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -119,6 +120,11 @@ func (a *App) startup(ctx context.Context) {
 
 	// Start Go proxy server in the background!
 	go func() {
+		emitError := func(msg string) {
+			log.Println("[GUI proxy]", msg)
+			wailsruntime.EventsEmit(a.ctx, "proxy-error", msg)
+		}
+
 		// 1. Auto-init config if it doesn't exist
 		defaultPath, err := config.DefaultPath()
 		if err == nil {
@@ -130,18 +136,18 @@ func (a *App) startup(ctx context.Context) {
 		// 2. Load config
 		cfg, err := config.Load("")
 		if err != nil {
-			log.Println("[GUI proxy] config load error:", err)
+			emitError("配置加载失败: " + err.Error())
 			return
 		}
 		if strings.TrimSpace(cfg.LocalAuthToken) == "" {
 			token, err := generateLocalAuthToken()
 			if err != nil {
-				log.Println("[GUI proxy] auth token generation error:", err)
+				emitError("认证令牌生成失败: " + err.Error())
 				return
 			}
 			cfg.LocalAuthToken = token
 			if err := cfg.Save(defaultPath); err != nil {
-				log.Println("[GUI proxy] auth token save error:", err)
+				emitError("认证令牌保存失败: " + err.Error())
 				return
 			}
 		}
@@ -149,7 +155,7 @@ func (a *App) startup(ctx context.Context) {
 		// 3. Create server
 		srv, err := proxy.New(cfg, &Assets)
 		if err != nil {
-			log.Println("[GUI proxy] server creation error:", err)
+			emitError("代理创建失败: " + err.Error())
 			return
 		}
 		if prefs, err := preferences.Load(""); err == nil {
@@ -169,7 +175,7 @@ func (a *App) startup(ctx context.Context) {
 
 		log.Println("[GUI proxy] starting background proxy server on http://" + cfg.Listen)
 		if err := srv.ListenAndServe(proxyCtx); err != nil {
-			log.Println("[GUI proxy] server stopped:", err)
+			emitError("代理停止: " + err.Error())
 		}
 	}()
 }
@@ -242,8 +248,8 @@ func (a *App) localProxyAuthToken() string {
 	return ""
 }
 
-// SaveProfileConfig saves API key, model aliases, proxy, timeout, and thinking settings.
-func (a *App) SaveProfileConfig(profileName, apiKey, defaultModel, sonnetAlias, haikuAlias, opusAlias, timeoutSeconds, thinkingBudgetTokens, listenAddr, upstream, rateLimitPerSecond, rateLimitBurst, rateLimitPerMinute, claudeEnvJSON string) string {
+// SaveProfileConfig saves API key, model aliases, proxy, timeout, thinking, and quota settings.
+func (a *App) SaveProfileConfig(profileName, apiKey, defaultModel, sonnetAlias, haikuAlias, opusAlias, timeoutSeconds, thinkingBudgetTokens, listenAddr, upstream, rateLimitPerSecond, rateLimitBurst, rateLimitPerMinute, claudeEnvJSON, quotaCookie, quotaWorkspaceID string) string {
 	// 1. Resolve path
 	path, err := config.DefaultPath()
 	if err != nil {
@@ -330,6 +336,13 @@ func (a *App) SaveProfileConfig(profileName, apiKey, defaultModel, sonnetAlias, 
 		}
 		cfg.ClaudeEnv = claudeEnv
 	}
+	if strings.TrimSpace(quotaCookie) != "" {
+		p.QuotaCookie = quotaCookie
+	}
+	if strings.TrimSpace(quotaWorkspaceID) != "" {
+		p.QuotaWorkspaceID = quotaWorkspaceID
+	}
+	cfg.Profiles[profileName] = p
 	if err := cfg.Validate(); err != nil {
 		return "validation error: " + err.Error()
 	}
@@ -1114,6 +1127,58 @@ func (a *App) GetPreferences() map[string]string {
 		"compact_shell":         prefs.CompactShell,
 		"expanded_integrations": string(expanded),
 	}
+}
+
+// FetchQuota queries OpenCode Go quota from the opencode.ai RPC endpoint.
+// Called from the frontend via Wails binding. Returns JSON-serializable result.
+// Credentials are resolved in this order: Profile config → env vars.
+func (a *App) FetchQuota() map[string]any {
+	cookie, workspaceID := a.resolveQuotaCredentials()
+	data, err := quota.FetchOpenCodeGoQuota(cookie, workspaceID)
+	if err != nil {
+		return map[string]any{
+			"success":       false,
+			"provider_name": "opencode-go",
+			"error":         err.Error(),
+		}
+	}
+
+	// Also cache in the proxy server so /ocgt/api/quota returns it
+	if a.srv != nil {
+		a.srv.SetQuotaData(data)
+	}
+
+	return map[string]any{
+		"success":       true,
+		"provider_name": "opencode-go",
+		"data":          data,
+	}
+}
+
+// resolveQuotaCredentials resolves quota credentials from config or env vars.
+// Priority: Profile.QuotaCookie/QuotaWorkspaceID → env vars.
+func (a *App) resolveQuotaCredentials() (cookie, workspaceID string) {
+	cookie = os.Getenv("OPENCODE_GO_AUTH_COOKIE")
+	workspaceID = os.Getenv("OPENCODE_GO_WORKSPACE_ID")
+	if cookie != "" && workspaceID != "" {
+		return
+	}
+
+	path, err := config.DefaultPath()
+	if err == nil {
+		cfg, err := config.Load(path)
+		if err == nil {
+			if profile, _, err := cfg.Profile(""); err == nil {
+				if cookie == "" && profile.QuotaCookie != "" {
+					cookie = profile.QuotaCookie
+				}
+				if workspaceID == "" && profile.QuotaWorkspaceID != "" {
+					workspaceID = profile.QuotaWorkspaceID
+				}
+			}
+		}
+	}
+	return
 }
 
 func isMaskedAPIKey(key string) bool {

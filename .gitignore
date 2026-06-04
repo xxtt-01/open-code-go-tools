@@ -1,15 +1,11 @@
-bin/
-dist/
+# 构建产物
 *.exe
-*.exe~
-*.test
-*.out
-*.prof
-coverage.txt
-vendor/
-ocgt-launch.log
-/settings.json
+*.zip
+*.msi
+build/bin/
+dist/
+/tmp/
 
-.alma-snapshots
-.claude/
-nul
+# 系统
+.DS_Store
+Thumbs.db
