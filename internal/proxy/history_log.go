@@ -16,10 +16,11 @@ func (s *Server) ConfigureHistoryLog(enabled bool, dir string, retentionDays int
 	defer s.historyLogMu.Unlock()
 	s.historyLogEnabled = enabled
 	s.historyLogDir = strings.TrimSpace(dir)
-	if retentionDays <= 0 {
+	if retentionDays < 0 {
 		retentionDays = defaultHistoryLogRetentionDays
 	}
 	s.historyLogRetentionDays = retentionDays
+	log.Printf("[history] ConfigureHistoryLog: enabled=%v dir=%q retention=%d", enabled, dir, retentionDays)
 }
 
 func (s *Server) persistHistoryEntry(entry requestLogEntry) {
@@ -52,7 +53,7 @@ func (s *Server) persistHistoryEntry(entry requestLogEntry) {
 
 func (s *Server) cleanupHistoryLogsLocked(now time.Time) {
 	if s.historyLogRetentionDays <= 0 {
-		s.historyLogRetentionDays = defaultHistoryLogRetentionDays
+		return
 	}
 	if now.Sub(s.historyLogLastCleanup) < time.Hour {
 		return

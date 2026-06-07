@@ -18,7 +18,7 @@ type blockState struct {
 	open  bool
 }
 
-func streamOpenAIAsAnthropic(w http.ResponseWriter, body io.Reader, model string, inputTokens int, onToolCall func(id, reasoning string)) int {
+func streamOpenAIAsAnthropic(w http.ResponseWriter, body io.Reader, model string, inputTokens int, onToolCall func(id, reasoning string)) (outputTokens int, actualInputTokens int, cacheReadTokens int, cacheCreateTokens int) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -40,7 +40,6 @@ func streamOpenAIAsAnthropic(w http.ResponseWriter, body io.Reader, model string
 
 	var curBlock *blockState
 	var blockIdx int
-	var outputTokens int
 	var accumulatedReasoning strings.Builder
 
 	type streamingTool struct {
@@ -106,6 +105,15 @@ func streamOpenAIAsAnthropic(w http.ResponseWriter, body io.Reader, model string
 		}
 		if chunk.Usage.PromptTokens > 0 {
 			inputTokens = chunk.Usage.PromptTokens
+		}
+		if chunk.Usage.CacheReadInputTokens > 0 {
+			cacheReadTokens = chunk.Usage.CacheReadInputTokens
+		}
+		if chunk.Usage.CacheCreationInputTokens > 0 {
+			cacheCreateTokens = chunk.Usage.CacheCreationInputTokens
+		}
+		if cacheReadTokens <= 0 && chunk.Usage.PromptTokensDetails != nil {
+			cacheReadTokens = chunk.Usage.PromptTokensDetails.CachedTokens
 		}
 		if len(chunk.Choices) == 0 {
 			continue
@@ -207,22 +215,23 @@ func streamOpenAIAsAnthropic(w http.ResponseWriter, body io.Reader, model string
 	closeCurrentBlock()
 
 	// Send final message delta with usage statistics
-	// Note: output_tokens is tracked during streaming, but cache-related fields
-	// (cache_creation_input_tokens, cache_read_input_tokens) are not available
-	// from OpenAI-compatible endpoints. This is a protocol limitation.
 	sendSSE(w, "message_delta", map[string]any{
 		"type": "message_delta",
 		"delta": map[string]any{
 			"stop_reason":   "end_turn",
 			"stop_sequence": nil,
 		},
-		"usage": map[string]int{"output_tokens": outputTokens},
+		"usage": map[string]int{
+			"output_tokens":               outputTokens,
+			"cache_creation_input_tokens": cacheCreateTokens,
+			"cache_read_input_tokens":     cacheReadTokens,
+		},
 	})
 	sendSSE(w, "message_stop", map[string]string{"type": "message_stop"})
 	if flusher != nil {
 		flusher.Flush()
 	}
-	return outputTokens
+	return outputTokens, inputTokens, cacheReadTokens, cacheCreateTokens
 }
 
 func streamAnthropicMessage(w http.ResponseWriter, message map[string]any) {

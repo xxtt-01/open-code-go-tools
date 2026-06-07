@@ -2,7 +2,7 @@
 
 > 🌐 **[English Version](docs/README.en-US.md)**
 
-`ocgt`（OpenCode Go Tools）是专为 **Claude Code** 与 **OpenCode Go**（opencode.ai）定制的原生桌面控制中心。内置超低延迟本地代理（Anthropic ↔ OpenAI Chat Completions 协议互转），提供中英双语 GUI，支持一键启动配置终端。
+`ocgt`（OpenCode Go Tools）是专为 **Claude Code** 与 **OpenCode Go**（opencode.ai）定制的原生桌面控制中心。内置超低延迟本地代理（Anthropic ↔ OpenAI Chat Completions 协议互转），提供中英双语 GUI，支持一键终端启动、流量监控与套餐额度看板。
 
 ---
 
@@ -10,28 +10,38 @@
 
 ### 📊 系统状态看板
 ![System Status](assets/2026-05-30_213807.png)
-- 实时监控代理监听端口（默认 `127.0.0.1:8787`）及上游 API 状态
+- 实时监控代理监听端口、上游 API 状态、API Key 配置
 - 可视化配置文件路径，一键打开所在文件夹
+- 客户端集成状态一目了然（CLI / VS Code / Claude Desktop）
 
 ### ⚙️ 配置管理
 ![Configuration Settings](assets/2026-05-30_213821.png)
 - 填入 API Key 即配置热重载生效
 - **模型映射**：Sonnet / Haiku / Opus 自由映射上游平替
-- **思考强度**：快速 / 慢速 / 深度 / 极客 / 关闭，防止误配
-- **模型回退链**：主模型失败自动尝试 FallbackChain
+- **思考强度**：低 / 中 / 高 / 极高 / 关
+- **同模型重试**：5 次指数退避 + 30s 断路器
 
-### 💻 终端启动
+### 💻 快速连接
 ![Terminal Activation](assets/2026-05-30_213831.png)
-- 选 PowerShell / Bash / CMD，一键拉起已注入全部代理变量的原生终端
-- 进入窗口直接 `claude` 即可开始
-- 外部终端支持一键复制环境变量 & CC Switch JSON 导入
+- 一键拉起已注入全部代理变量的原生终端（PowerShell / Bash / CMD）
+- 四种客户端集成：CLI（全局 settings.json）、VS Code、Claude Code settings、Claude Desktop App（3P Profile）
+- 一键修复所有已配置的集成
 
-### 📡 流量监控
-- 实时捕获 Claude Code API 请求日志、耗时、状态码
-- 汇总成功率与平均延迟
+### 📡 流量监控雷达
+- **多巴胺配色仪表盘**：统计卡片、Token/请求量折线图（自适应小时/天/周粒度）、模型环形图
+- **流量明细**（Ctrl+5）：10 字段全维度表格、三维筛选（时间+模型+状态）、分页导航、CSV 导出、一键清除
 
-### 🎨 偏好设置中心
-- 主题模式：浅色 / 深色 / 跟随系统
+### 📊 套餐额度看板
+- Rolling / Weekly / Monthly 三级额度进度条
+- 每 5 秒自动刷新，支持手动刷新
+
+### 🧩 配套工具 — [ocgt-monitor](https://github.com/xxtt-01/ocgt-monitor)
+- 独立终端监控工具，实时展示 ocgt 代理请求日志
+- 彩色高亮输出，支持过滤和统计
+- 与 ocgt GUI 互补使用，适合全屏终端工作流
+
+### 🎨 偏好设置
+- 主题模式：浅色 / 深色 / 跟随系统 · 5 种主题色 + 自定义色相
 - 界面语言：中文 / English
 - 关闭窗口行为：每次询问 / 最小化到托盘 / 退出程序
 
@@ -39,9 +49,9 @@
 
 ## 🚀 快速开始
 
-1. **下载**：[Releases](../../releases) → 选系统版本（Windows: `ocgt_v2.0.0.exe`）
-2. **配置**：配置管理页 → 填 **OpenCode Go API Key** → 选模型 → 保存并热重载
-3. **启动**：终端启动页 → 选终端类型 → 一键拉起 → 输入 `claude`
+1. **下载**：[Releases](../../releases) → 下载最新版本
+2. **配置**：配置管理页（Ctrl+2）→ 填 **OpenCode Go API Key** → 选模型 → 保存
+3. **启动**：快速连接（Ctrl+3）→ 选择终端类型 → 一键拉起 → 输入 `claude`
 
 ---
 
@@ -58,21 +68,13 @@
 
 ---
 
-## 🖼️ 图片 / 多模态支持
-
-- **Anthropic 原生路径**：图片 content blocks 原样透传，完整支持
-- **OpenAI 转换路径**：图片转为 `image_url` 结构体
-- **自动降级**：目标模型不支持 vision 时，图片自动替换为 `[image]` 文本占位符，防止上游报错（如 DeepSeek 拒绝 `image_url`）
-
----
-
 ## 📁 配置与热重载
 
 ```text
 %USERPROFILE%\.ocgt\config.json
 ```
 
-- **Schema 版本化**：`version` 字段 + `Migrate()` 迁移方法，未来格式升级无感
+- **Schema 版本化**：`version` 字段 + `Migrate()` 迁移方法
 - **热重载**：ModTime 检测 + 3s 轮询，外部编辑自动生效
 - **多 Profile**：`X-Ocgt-Profile` header 或默认 `active_profile`
 
@@ -92,7 +94,7 @@ ocgt version    # 查看版本
 
 ## 🛠️ 构建
 
-需要 Go 1.22+，Wails v2.12（GUI 构建必须满足 Go 1.22；Go 1.21 无法编译 Wails v2.12）：
+需要 Go 1.22+，Wails v2.12：
 
 ```powershell
 go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
@@ -102,52 +104,21 @@ wails dev          # 开发模式
 
 ---
 
-
-
 ## ⚠️ 已知限制
 
+通过 ocgt 代理时，`used_percentage` 和 usage 统计可能不准确：
 
+1. **协议差异**：OpenAI Chat Completions API 不支持 Anthropic 的 prompt caching 字段（`cache_creation_input_tokens` / `cache_read_input_tokens` 始终为 0）
+2. **上游限制**：非 Anthropic 模型（kimi/deepseek/qwen 等）不返回 prompt caching 数据
 
-### Usage 统计不完整
-
-
-
-通过 ocgt 代理时，`used_percentage` 和 usage 统计可能不准确，原因如下：
-
-
-
-1. **协议差异**: OpenAI Chat Completions API 不支持 Anthropic 的 prompt caching 字段
-
-   - `cache_creation_input_tokens` → 始终为 0
-
-   - `cache_read_input_tokens` → 始终为 0
-
-
-
-2. **上游限制**: 非Anthropic 模型 (kimi/deepseek/qwen等) 不返回 prompt caching 数据
-
-
-
-3. **影响**: `used_percentage = (input + cache_creation + cache_read) / window_size` 计算结果偏低
-
-
-
-**这不是 bug，而是架构限制**。如需完整的 usage 统计，请使用 Anthropic 原生 API 或支持 prompt caching 的上游。
-
-
+**这不是 bug，而是架构限制。**
 
 ---
 
-
-
 ## 📄 许可证
-
-
 
 MIT License
 
-
-
 ## 邀请链接
 
-可以走此链接订购go计划：https://opencode.ai/go?ref=RRWQDE4CWW
+可以走此链接订购 go 计划：https://opencode.ai/go?ref=RRWQDE4CWW

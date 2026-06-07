@@ -1,15 +1,16 @@
-bin/
-dist/
+# 构建产物
 *.exe
-*.exe~
-*.test
-*.out
-*.prof
-coverage.txt
-vendor/
-ocgt-launch.log
-/settings.json
+*.zip
+*.msi
+build/bin/
+dist/
+/tmp/
 
-.alma-snapshots
-.claude/
-nul
+# 系统
+.DS_Store
+Thumbs.db
+
+# 设计文档（非项目代码）
+分析报告-数据计算准确性.html
+设计文档-流量监控页UI方案.html
+设计文档-流量监控页优化方案.html

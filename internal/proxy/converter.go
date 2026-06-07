@@ -196,13 +196,11 @@ func openAIToAnthropic(in openAIResponse, model string, fallbackInputTokens int)
 	// This is an architectural limitation, not a bug.
 	usageInfo := usageFromOpenAI(in.Usage, fallbackInputTokens)
 	usage := map[string]int{
-		"input_tokens":  usageInfo.InputTokens,
-		"output_tokens": usageInfo.OutputTokens,
+		"input_tokens":                usageInfo.InputTokens,
+		"output_tokens":               usageInfo.OutputTokens,
+		"cache_creation_input_tokens": usageInfo.CacheCreationTokens,
+		"cache_read_input_tokens":     usageInfo.CacheReadTokens,
 	}
-	// Note: cache_creation_input_tokens and cache_read_input_tokens intentionally omitted
-	// (default to 0) because OpenAI Chat Completions API does not provide prompt caching metrics.
-	// Anthropic Claude models accessed via OpenAI-compatible endpoints may provide partial data,
-	// but most third-party models (kimi, deepseek, qwen, etc.) do not support prompt caching.
 
 	return map[string]any{
 		"id":            firstNonEmpty(in.ID, "msg_ocgt_"+strconv.FormatInt(time.Now().UnixNano(), 36)),
@@ -225,9 +223,16 @@ func usageFromOpenAI(in openAIUsage, fallbackInputTokens int) tokenUsage {
 	if outputTokens <= 0 && in.TotalTokens > inputTokens {
 		outputTokens = in.TotalTokens - inputTokens
 	}
+	// 提取 cache tokens：优先取 Anthropic 原生字段，其次取 prompt_tokens_details
+	cacheRead := in.CacheReadInputTokens
+	if cacheRead <= 0 && in.PromptTokensDetails != nil {
+		cacheRead = in.PromptTokensDetails.CachedTokens
+	}
 	return tokenUsage{
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
+		InputTokens:     inputTokens,
+		OutputTokens:    outputTokens,
+		CacheReadTokens: cacheRead,
+		CacheCreationTokens: in.CacheCreationInputTokens,
 	}
 }
 

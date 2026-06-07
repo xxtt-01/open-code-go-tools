@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -10,14 +11,20 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ethan-blue/open-code-go-tools/internal/config"
+	"github.com/ethan-blue/open-code-go-tools/internal/quota"
 	"github.com/ethan-blue/open-code-go-tools/internal/version"
 )
 
@@ -57,6 +64,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/ocgt/api/syslog", s.apiSyslog)
 	mux.HandleFunc("/ocgt/api/version", s.apiVersion)
 	mux.HandleFunc("/ocgt/api/config/raw", s.apiRawConfig)
+	mux.HandleFunc("/ocgt/api/quota", s.apiQuota)
+	mux.HandleFunc("/ocgt/api/quota/refresh", s.apiRefreshQuota)
+	s.registerStatsRoutes(mux)
 
 	mux.HandleFunc("/", s.serveStatic)
 
@@ -84,7 +94,113 @@ func (s *Server) Handler() http.Handler {
 	return handler
 }
 
+// ensurePortAvailable probes the configured listen address and auto-kills any
+// process that is already holding the port. This handles the common case where
+// the user upgrades ocgt without manually closing the old instance.
+func (s *Server) ensurePortAvailable() {
+	addr := s.config.Listen
+	if addr == "" {
+		addr = config.DefaultListen
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err == nil {
+		ln.Close()
+		return // port is free
+	}
+	// Port is in use — try to find and kill the offender
+	log.Printf("ocgt: port %s is in use, attempting to release it...", addr)
+
+	// Extract port for search
+	_, port, parseErr := net.SplitHostPort(addr)
+	if parseErr != nil {
+		port = addr
+	}
+	pid := s.findPIDByPort(port)
+	if pid == 0 {
+		log.Printf("ocgt: could not find process holding port %s, giving up", addr)
+		return
+	}
+	log.Printf("ocgt: killing PID %d holding port %s", pid, addr)
+	killErr := s.killPID(pid)
+	if killErr != nil {
+		log.Printf("ocgt: failed to kill PID %d (attempt 1): %v", pid, killErr)
+		time.Sleep(1 * time.Second)
+		killErr = s.killPID(pid)
+		if killErr != nil {
+			log.Printf("ocgt: failed to kill PID %d (attempt 2): %v", pid, killErr)
+			return
+		}
+	}
+	// Give OS time to release the port
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify the port is now free
+	ln2, err2 := net.Listen("tcp", addr)
+	if err2 != nil {
+		log.Printf("ocgt: port %s still not available after killing PID %d: %v", addr, pid, err2)
+		return
+	}
+	ln2.Close()
+	log.Printf("ocgt: port %s released successfully", addr)
+}
+
+func (s *Server) findPIDByPort(port string) int {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		// Use findstr to filter by port first, avoiding locale-dependent state parsing.
+		// The trailing space after :PORT prevents partial matches (e.g., :8787 vs :87870).
+		cmd = exec.CommandContext(ctx, "cmd", "/C", "netstat -ano | findstr \":"+port+" \"")
+	default:
+		// Unix: lsof -ti :PORT returns just the PID
+		out, err := exec.CommandContext(ctx, "lsof", "-ti", ":"+port).Output()
+		if err != nil {
+			return 0
+		}
+		pid, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+		return pid
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+	// Parse findstr output: locate the PID from the last whitespace-delimited field.
+	// Netstat output structure (locale-independent for the numeric parts):
+	//   Proto  Local Address    Foreign Address   State         PID
+	//   TCP    127.0.0.1:8787   0.0.0.0:0         LISTENING     12345
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, ":"+port+" ") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		// PID is always the last field, and is numeric
+		pid, err := strconv.Atoi(fields[len(fields)-1])
+		if err == nil && pid > 0 {
+			return pid
+		}
+	}
+	return 0
+}
+
+func (s *Server) killPID(pid int) error {
+	cmd := exec.Command("taskkill", "/F", "/PID", strconv.Itoa(pid))
+	// On Unix, use kill -9 as fallback if taskkill doesn't exist
+	if runtime.GOOS != "windows" {
+		cmd = exec.Command("kill", "-9", strconv.Itoa(pid))
+	}
+	return cmd.Run()
+}
+
 func (s *Server) ListenAndServe(ctx context.Context) error {
+	// Probe port and auto-release if occupied by a stale process
+	s.ensurePortAvailable()
+
 	server := &http.Server{
 		Addr:              s.config.Listen,
 		Handler:           s.Handler(),
@@ -363,34 +479,33 @@ func (s *Server) buildCandidateModels(payloadModel string, profile config.Profil
 
 func (s *Server) forwardAnthropicMessages(w http.ResponseWriter, r *http.Request, profile config.Profile, payload anthropicRequest, original []byte) {
 	// Track in-flight streaming requests for graceful shutdown.
-	// This handler is used for all Anthropic Messages API calls, including streaming.
 	s.wg.Add(1)
 	defer s.wg.Done()
 
 	client := clientSourceFromRequest(r)
-	candidates := s.buildCandidateModels(payload.Model, profile)
+	model := payload.Model
+	const maxRetries = 5
 
 	var lastErr error
 	var lastStatus int
 	var lastBody []byte
 
-	for idx, candidate := range candidates {
-		// Circuit Breaker check: skip if tripped, unless this is the only or last option
-		if s.isModelCircuitTripped(candidate) && idx < len(candidates)-1 {
-			log.Printf("[CircuitBreaker] Skipping tripped model %q in fallback chain", candidate)
-			continue
-		}
-
+	// Check circuit breaker before starting retry loop
+	if s.isModelCircuitTripped(model) {
+		log.Printf("[CircuitBreaker] Model %q is tripped, rejecting new request", model)
+		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("model %q is temporarily unavailable (circuit breaker)", model))
+		return
+	}
+	for attempt := 0; attempt <= maxRetries; attempt++ {
 		var raw map[string]any
 		if err := json.Unmarshal(original, &raw); err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		raw["model"] = candidate
+		raw["model"] = model
 
-		// Sanitize image content for non-vision models to prevent upstream errors
-		// (e.g. "unknown variant image_url, expected text" from DeepSeek).
-		if !supportsVisionInput(candidate) {
+		// Sanitize image content for non-vision models
+		if !supportsVisionInput(model) {
 			if msgs, ok := raw["messages"].([]interface{}); ok {
 				data, _ := json.Marshal(msgs)
 				var anthropicMsgs []anthropicMsg
@@ -402,7 +517,7 @@ func (s *Server) forwardAnthropicMessages(w http.ResponseWriter, r *http.Request
 		}
 
 		if thinking, ok := raw["thinking"]; ok {
-			if !supportsAnthropicThinkingRequest(candidate) {
+			if !supportsAnthropicThinkingRequest(model) {
 				delete(raw, "thinking")
 			} else {
 				bounded := boundedThinkingPayload(thinking, s.thinkingBudgetTokens())
@@ -439,51 +554,99 @@ func (s *Server) forwardAnthropicMessages(w http.ResponseWriter, r *http.Request
 		duration := time.Since(start)
 
 		if err != nil {
-			s.recordModelFailure(candidate)
+			s.recordModelFailure(model)
 			lastErr = err
 			lastStatus = proxyErrorStatus(err)
-			log.Printf("[Fallback] Request to model %q failed: %v. Remaining candidates: %d", candidate, err, len(candidates)-idx-1)
-			s.addHistoryEntryWithUsageAndError(r.Method, r.URL.Path, lastStatus, duration, candidate, "messages", tokenUsage{Client: client}, err.Error())
-			continue
-		}
-		// Ensure response body is always closed
-		defer resp.Body.Close()
+			log.Printf("[Retry] Request to model %q failed (attempt %d/%d): %v", model, attempt+1, maxRetries+1, err)
+			s.addHistoryEntryWithUsageAndError(r.Method, r.URL.Path, lastStatus, duration, model, "messages", tokenUsage{Client: client}, err.Error())
 
-		log.Printf("upstream route=messages model=%s status=%d", candidate, resp.StatusCode)
+			if attempt < maxRetries {
+				backoff := time.Duration(500*(1<<attempt)) * time.Millisecond
+				log.Printf("[Retry] Backoff %v then retry %d/%d for model %s", backoff, attempt+2, maxRetries+1, model)
+				time.Sleep(backoff)
+				continue
+			}
+			break
+		}
+
+		log.Printf("upstream route=messages model=%s status=%d", model, resp.StatusCode)
 
 		if resp.StatusCode >= 400 {
 			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, MaxBodySize))
+			resp.Body.Close()
 			errText := upstreamErrorSummary(resp.StatusCode, respBody)
 
-			// Record failure in Circuit Breaker
-			s.recordModelFailure(candidate)
+			s.recordModelFailure(model)
 
-			// If it's a client error (4xx) other than rate limit (429), do not fallback, return immediately.
+			// Client error (except 429) → return immediately, no retry
 			if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
 				writeUpstreamError(w, resp.StatusCode, respBody)
-				s.addHistoryEntryWithUsageAndError(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "messages", tokenUsage{Client: client}, errText)
+				s.addHistoryEntryWithUsageAndError(r.Method, r.URL.Path, resp.StatusCode, duration, model, "messages", tokenUsage{Client: client}, errText)
 				return
 			}
 
-			// Otherwise, save state and try next fallback model
-			lastErr = fmt.Errorf("upstream model %s returned status %d: %s", candidate, resp.StatusCode, errText)
+			// 5xx or 429 → log and retry
+			log.Printf("[Retry] Model %q returned %d (attempt %d/%d): %s", model, resp.StatusCode, attempt+1, maxRetries+1, errText)
+			s.addHistoryEntryWithUsageAndError(r.Method, r.URL.Path, resp.StatusCode, duration, model, "messages", tokenUsage{Client: client}, errText)
+
+			if attempt < maxRetries {
+				backoff := time.Duration(500*(1<<attempt)) * time.Millisecond
+				log.Printf("[Retry] Backoff %v then retry %d/%d for model %s", backoff, attempt+2, maxRetries+1, model)
+				time.Sleep(backoff)
+				continue
+			}
+
+			// All retries exhausted
+			lastErr = fmt.Errorf("upstream model %s returned status %d after %d retries: %s", model, resp.StatusCode, maxRetries+1, errText)
 			lastStatus = resp.StatusCode
 			lastBody = respBody
-			s.addHistoryEntryWithUsageAndError(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "messages", tokenUsage{Client: client}, errText)
-			continue
+			break
 		}
 
 		// Success!
-		s.recordModelSuccess(candidate)
+		s.recordModelSuccess(model)
 		copyHeaders(w.Header(), resp.Header)
 		stripHopByHopHeaders(w.Header())
 		w.WriteHeader(resp.StatusCode)
-		_, _ = copyResponse(w, resp.Body)
-		s.addHistoryEntryWithUsage(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "messages", tokenUsage{Client: client})
+
+		if payload.Stream {
+			usage := extractUsageFromAnthropicStream(w, resp.Body)
+			resp.Body.Close()
+			s.addHistoryEntryWithUsage(r.Method, r.URL.Path, resp.StatusCode, duration, model, "messages", tokenUsage{
+				InputTokens:         usage.InputTokens,
+				OutputTokens:        usage.OutputTokens,
+				CacheCreationTokens: usage.CacheCreationTokens,
+				CacheReadTokens:     usage.CacheReadTokens,
+				Client:              client,
+			})
+		} else {
+			data, _ := io.ReadAll(io.LimitReader(resp.Body, MaxBodySize))
+			resp.Body.Close()
+			var anthropicResp struct {
+				Usage struct {
+					InputTokens              int `json:"input_tokens"`
+					OutputTokens             int `json:"output_tokens"`
+					CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+					CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+				} `json:"usage"`
+			}
+			if json.Unmarshal(data, &anthropicResp) == nil {
+				s.addHistoryEntryWithUsage(r.Method, r.URL.Path, resp.StatusCode, duration, model, "messages", tokenUsage{
+					InputTokens:         anthropicResp.Usage.InputTokens,
+					OutputTokens:        anthropicResp.Usage.OutputTokens,
+					CacheCreationTokens: anthropicResp.Usage.CacheCreationInputTokens,
+					CacheReadTokens:     anthropicResp.Usage.CacheReadInputTokens,
+					Client:              client,
+				})
+			} else {
+				s.addHistoryEntryWithUsage(r.Method, r.URL.Path, resp.StatusCode, duration, model, "messages", tokenUsage{Client: client})
+			}
+			_, _ = w.Write(data)
+		}
 		return
 	}
 
-	// All fallback candidates failed
+	// All retry attempts failed
 	if lastErr != nil {
 		if len(lastBody) > 0 {
 			writeUpstreamError(w, lastStatus, lastBody)
@@ -492,39 +655,97 @@ func (s *Server) forwardAnthropicMessages(w http.ResponseWriter, r *http.Request
 		}
 		return
 	}
-	writeError(w, http.StatusBadGateway, fmt.Errorf("all fallback candidates failed"))
+	writeError(w, http.StatusBadGateway, fmt.Errorf("all %d retry attempts failed", maxRetries+1))
+}
+
+// extractUsageFromAnthropicStream tees the upstream SSE response body,
+// streams it to the client, and simultaneously parses the final
+// message_delta event for usage statistics (input_tokens, output_tokens,
+// cache_creation_input_tokens, cache_read_input_tokens).
+func extractUsageFromAnthropicStream(w http.ResponseWriter, body io.Reader) tokenUsage {
+	var (
+		usage                                     tokenUsage
+		lineBuf                                   strings.Builder
+		capturing , inEvent                       bool
+	)
+	flusher, _ := w.(http.Flusher)
+
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 256*1024), 16*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		_, _ = w.Write([]byte(line + "\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+
+		if inEvent {
+			if strings.HasPrefix(line, "data:") {
+				lineBuf.WriteString(strings.TrimPrefix(line, "data:"))
+			} else if line == "" {
+				if capturing {
+					var payload map[string]any
+					if json.Unmarshal([]byte(lineBuf.String()), &payload) == nil {
+						if u, ok := payload["usage"].(map[string]any); ok {
+							if v, ok := u["input_tokens"].(float64); ok {
+								usage.InputTokens = int(v)
+							}
+							if v, ok := u["output_tokens"].(float64); ok {
+								usage.OutputTokens = int(v)
+							}
+							if v, ok := u["cache_creation_input_tokens"].(float64); ok {
+								usage.CacheCreationTokens = int(v)
+							}
+							if v, ok := u["cache_read_input_tokens"].(float64); ok {
+								usage.CacheReadTokens = int(v)
+							}
+						}
+					}
+					capturing = false
+				}
+				inEvent = false
+				lineBuf.Reset()
+			}
+			continue
+		}
+
+		if strings.HasPrefix(line, "event: message_delta") {
+			inEvent = true
+			capturing = true
+		}
+	}
+	return usage
 }
 
 func (s *Server) forwardChatCompletions(w http.ResponseWriter, r *http.Request, profile config.Profile, payload anthropicRequest) {
 	// Track in-flight streaming requests for graceful shutdown.
-	// This handler is used for all OpenAI-compatible Chat Completions calls, including streaming.
 	s.wg.Add(1)
 	defer s.wg.Done()
 
 	client := clientSourceFromRequest(r)
-	candidates := s.buildCandidateModels(payload.Model, profile)
+	model := payload.Model
+	const maxRetries = 5
 
 	var lastErr error
 	var lastStatus int
 	var lastBody []byte
 
-	for idx, candidate := range candidates {
-		// Circuit Breaker check: skip if tripped, unless this is the only or last option
-		if s.isModelCircuitTripped(candidate) && idx < len(candidates)-1 {
-			log.Printf("[CircuitBreaker] Skipping tripped model %q in fallback chain", candidate)
-			continue
-		}
-
-		// Sanitize image content for non-vision models to prevent upstream errors
-		// (e.g. "unknown variant image_url, expected text" from DeepSeek).
-		if !supportsVisionInput(candidate) {
+	// Check circuit breaker before starting retry loop
+	if s.isModelCircuitTripped(model) {
+		log.Printf("[CircuitBreaker] Model %q is tripped, rejecting new request", model)
+		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("model %q is temporarily unavailable (circuit breaker)", model))
+		return
+	}
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		// Sanitize image content for non-vision models
+		if !supportsVisionInput(model) {
 			sanitizeContentBlocksForNonVision(payload.Messages)
 		}
 
 		chatReq := anthropicToOpenAI(payload)
-		chatReq.Model = candidate
-		chatReq.Thinking, chatReq.ReasoningEffort = chatCompletionThinkingControls(candidate, payload.Thinking, s.thinkingBudgetTokens())
-		if supportsReasoningContentReplay(candidate) {
+		chatReq.Model = model
+		chatReq.Thinking, chatReq.ReasoningEffort = chatCompletionThinkingControls(model, payload.Thinking, s.thinkingBudgetTokens())
+		if supportsReasoningContentReplay(model) {
 			s.attachReasoningContent(chatReq.Messages)
 		}
 		body, err := json.Marshal(chatReq)
@@ -547,68 +768,88 @@ func (s *Server) forwardChatCompletions(w http.ResponseWriter, r *http.Request, 
 		duration := time.Since(start)
 
 		if err != nil {
-			s.recordModelFailure(candidate)
+			s.recordModelFailure(model)
 			lastErr = err
 			lastStatus = proxyErrorStatus(err)
-			log.Printf("[Fallback] Request to model %q failed: %v. Remaining candidates: %d", candidate, err, len(candidates)-idx-1)
-			s.addHistoryEntryWithUsageAndError(r.Method, r.URL.Path, lastStatus, duration, candidate, "chat/completions", tokenUsage{Client: client}, err.Error())
-			continue
-		}
-		// Ensure response body is always closed
-		defer resp.Body.Close()
+			log.Printf("[Retry] Request to model %q failed (attempt %d/%d): %v", model, attempt+1, maxRetries+1, err)
+			s.addHistoryEntryWithUsageAndError(r.Method, r.URL.Path, lastStatus, duration, model, "chat/completions", tokenUsage{Client: client}, err.Error())
 
-		log.Printf("upstream route=chat/completions model=%s status=%d", candidate, resp.StatusCode)
+			if attempt < maxRetries {
+				backoff := time.Duration(500*(1<<attempt)) * time.Millisecond
+				log.Printf("[Retry] Backoff %v then retry %d/%d for model %s", backoff, attempt+2, maxRetries+1, model)
+				time.Sleep(backoff)
+				continue
+			}
+			break
+		}
+
+		log.Printf("upstream route=chat/completions model=%s status=%d", model, resp.StatusCode)
 
 		if resp.StatusCode >= 400 {
 			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, MaxBodySize))
+			resp.Body.Close()
 			errText := upstreamErrorSummary(resp.StatusCode, respBody)
 
-			// Record failure in Circuit Breaker
-			s.recordModelFailure(candidate)
+			s.recordModelFailure(model)
 
-			// If it's a client error (4xx) other than rate limit (429), do not fallback, return immediately.
+			// Client error (except 429) → return immediately, no retry
 			if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
 				writeUpstreamError(w, resp.StatusCode, respBody)
-				s.addHistoryEntryWithUsageAndError(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "chat/completions", tokenUsage{Client: client}, errText)
+				s.addHistoryEntryWithUsageAndError(r.Method, r.URL.Path, resp.StatusCode, duration, model, "chat/completions", tokenUsage{Client: client}, errText)
 				return
 			}
 
-			// Otherwise, save state and try next fallback model
-			lastErr = fmt.Errorf("upstream model %s returned status %d: %s", candidate, resp.StatusCode, errText)
+			// 5xx or 429 → log and retry
+			log.Printf("[Retry] Model %q returned %d (attempt %d/%d): %s", model, resp.StatusCode, attempt+1, maxRetries+1, errText)
+			s.addHistoryEntryWithUsageAndError(r.Method, r.URL.Path, resp.StatusCode, duration, model, "chat/completions", tokenUsage{Client: client}, errText)
+
+			if attempt < maxRetries {
+				backoff := time.Duration(500*(1<<attempt)) * time.Millisecond
+				log.Printf("[Retry] Backoff %v then retry %d/%d for model %s", backoff, attempt+2, maxRetries+1, model)
+				time.Sleep(backoff)
+				continue
+			}
+
+			// All retries exhausted
+			lastErr = fmt.Errorf("upstream model %s returned status %d after %d retries: %s", model, resp.StatusCode, maxRetries+1, errText)
 			lastStatus = resp.StatusCode
 			lastBody = respBody
-			s.addHistoryEntryWithUsageAndError(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "chat/completions", tokenUsage{Client: client}, errText)
-			continue
+			break
 		}
 
 		// Success!
-		s.recordModelSuccess(candidate)
+		s.recordModelSuccess(model)
 		if payload.Stream {
-			outputTokens := streamOpenAIAsAnthropic(w, resp.Body, candidate, estimateTokens(payload), s.setReasoningLocked)
-			s.addHistoryEntryWithUsage(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "chat/completions (stream)", tokenUsage{
-				InputTokens:  estimateTokens(payload),
-				OutputTokens: outputTokens,
-				Client:       client,
+			outputTokens, inputTokens, cacheReadTokens, cacheCreateTokens := streamOpenAIAsAnthropic(w, resp.Body, model, estimateTokens(payload), s.setReasoningLocked)
+			resp.Body.Close()
+			s.addHistoryEntryWithUsage(r.Method, r.URL.Path, resp.StatusCode, duration, model, "chat/completions (stream)", tokenUsage{
+				InputTokens:         inputTokens,
+				OutputTokens:        outputTokens,
+				CacheReadTokens:     cacheReadTokens,
+				CacheCreationTokens: cacheCreateTokens,
+				Client:              client,
 			})
 			return
 		}
 
 		var out openAIResponse
 		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			resp.Body.Close()
 			writeError(w, http.StatusBadGateway, err)
-			s.addHistoryEntryWithUsage(r.Method, r.URL.Path, http.StatusBadGateway, duration, candidate, "chat/completions", tokenUsage{Client: client})
+			s.addHistoryEntryWithUsage(r.Method, r.URL.Path, http.StatusBadGateway, duration, model, "chat/completions", tokenUsage{Client: client})
 			return
 		}
+		resp.Body.Close()
 		s.cacheReasoningContent(out)
-		message := openAIToAnthropic(out, candidate, estimateTokens(payload))
+		message := openAIToAnthropic(out, model, estimateTokens(payload))
 		writeJSON(w, http.StatusOK, message)
 		usage := usageFromOpenAI(out.Usage, estimateTokens(payload))
 		usage.Client = client
-		s.addHistoryEntryWithUsage(r.Method, r.URL.Path, resp.StatusCode, duration, candidate, "chat/completions", usage)
+		s.addHistoryEntryWithUsage(r.Method, r.URL.Path, resp.StatusCode, duration, model, "chat/completions", usage)
 		return
 	}
 
-	// All fallback candidates failed
+	// All retry attempts failed
 	if lastErr != nil {
 		if len(lastBody) > 0 {
 			writeUpstreamError(w, lastStatus, lastBody)
@@ -617,7 +858,7 @@ func (s *Server) forwardChatCompletions(w http.ResponseWriter, r *http.Request, 
 		}
 		return
 	}
-	writeError(w, http.StatusBadGateway, fmt.Errorf("all fallback candidates failed"))
+	writeError(w, http.StatusBadGateway, fmt.Errorf("all %d retry attempts failed", maxRetries+1))
 }
 
 func (s *Server) thinkingBudgetTokens() int {
@@ -918,7 +1159,7 @@ func (s *Server) addHistoryEntryWithUsageAndError(method, path string, status in
 		OutputTokens:        usage.OutputTokens,
 		CacheCreationTokens: usage.CacheCreationTokens,
 		CacheReadTokens:     usage.CacheReadTokens,
-		TotalTokens:         usage.InputTokens + usage.OutputTokens + usage.CacheCreationTokens + usage.CacheReadTokens,
+		TotalTokens:         usage.InputTokens + usage.OutputTokens + usage.CacheCreationTokens,
 		Error:               errorText,
 	}
 	s.history = append([]requestLogEntry{entry}, s.history...) // prepend so newest is first
@@ -1172,16 +1413,32 @@ func (s *Server) apiSetKey(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiHistory(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		days := parseIntParam(r, "days", 0)
+		// 先读内存历史（当前会话）
 		s.historyMu.RLock()
-		if s.history == nil {
-			s.historyMu.RUnlock()
-			writeJSON(w, http.StatusOK, []requestLogEntry{})
-			return
-		}
-		hist := make([]requestLogEntry, len(s.history))
-		copy(hist, s.history)
+		memHist := s.history
 		s.historyMu.RUnlock()
-		writeJSON(w, http.StatusOK, hist)
+
+		// 再从 JSONL 文件读取（历史持久化），readJSONLLogs 内部有去重
+		fileEntries := s.readJSONLLogs(days)
+
+		// 合并两份数据：文件条目（已按时间倒序）+ 内存中新增的（文件可能没来得及写入的）
+		seen := make(map[string]bool, len(fileEntries))
+		for _, e := range fileEntries {
+			seen[e.ID] = true
+		}
+		for _, e := range memHist {
+			if !seen[e.ID] {
+				fileEntries = append(fileEntries, e)
+			}
+		}
+
+		// 按时间倒序排列（最新在前）
+		sort.Slice(fileEntries, func(i, j int) bool {
+			return fileEntries[i].Time.After(fileEntries[j].Time)
+		})
+
+		writeJSON(w, http.StatusOK, fileEntries)
 	case http.MethodDelete:
 		s.historyMu.Lock()
 		s.history = nil
@@ -1238,9 +1495,13 @@ func (s *Server) apiRawConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodPost {
-		data, err := io.ReadAll(r.Body)
+		data, err := io.ReadAll(io.LimitReader(r.Body, MaxBodySize+1))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if int64(len(data)) > MaxBodySize {
+			writeError(w, http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large (max %d bytes)", MaxBodySize))
 			return
 		}
 		var js map[string]interface{}
@@ -1272,4 +1533,80 @@ func (s *Server) apiVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"version": version.Version})
+}
+
+// SetQuotaData sets the cached quota data from an external caller (e.g. Wails frontend).
+func (s *Server) SetQuotaData(data *quota.QuotaData) {
+	s.quotaMu.Lock()
+	defer s.quotaMu.Unlock()
+	s.quotaData = data
+}
+
+// apiQuota returns the cached quota data (GET only).
+// Use /ocgt/api/quota/refresh to fetch fresh data first.
+func (s *Server) apiQuota(w http.ResponseWriter, r *http.Request) {
+	s.quotaMu.RLock()
+	data := s.quotaData
+	s.quotaMu.RUnlock()
+
+	result := quota.QuotaResult{
+		Success:      data != nil,
+		ProviderName: "opencode-go",
+		Data:         data,
+	}
+	if data == nil {
+		result.Error = "no quota data available — call POST /ocgt/api/quota/refresh first"
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// apiRefreshQuota fetches fresh quota data from OpenCode Go (POST only).
+// Credentials are resolved in this order: profile config → env vars.
+func (s *Server) apiRefreshQuota(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, fmt.Errorf("POST required"))
+		return
+	}
+
+	cookie, workspaceID := s.resolveQuotaCredentials()
+	data, err := quota.FetchOpenCodeGoQuota(cookie, workspaceID)
+	if err != nil {
+		writeJSON(w, http.StatusOK, quota.QuotaResult{
+			Success: false,
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	s.quotaMu.Lock()
+	s.quotaData = data
+	s.quotaMu.Unlock()
+
+	writeJSON(w, http.StatusOK, quota.QuotaResult{
+		Success: true,
+		Data:    data,
+	})
+}
+
+// resolveQuotaCredentials resolves from profile config, falling back to env vars.
+func (s *Server) resolveQuotaCredentials() (cookie, workspaceID string) {
+	cookie = os.Getenv("OPENCODE_GO_AUTH_COOKIE")
+	workspaceID = os.Getenv("OPENCODE_GO_WORKSPACE_ID")
+	if cookie != "" && workspaceID != "" {
+		return
+	}
+
+	s.configMu.RLock()
+	defer s.configMu.RUnlock()
+	profile, _, err := s.config.Profile("")
+	if err != nil {
+		return
+	}
+	if cookie == "" && profile.QuotaCookie != "" {
+		cookie = profile.QuotaCookie
+	}
+	if workspaceID == "" && profile.QuotaWorkspaceID != "" {
+		workspaceID = profile.QuotaWorkspaceID
+	}
+	return
 }

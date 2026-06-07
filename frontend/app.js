@@ -1,10 +1,10 @@
-const APP_VERSION = 'v2.0.1';
+const APP_VERSION = 'v2.0.2';
 const DEFAULT_CLOSE_BEHAVIOR = 'prompt';
 const CLOSE_BEHAVIORS = new Set(['prompt', 'minimize', 'exit']);
 const ALLOWED_THINKING_BUDGETS = ['256', '512', '1024', '2048', '-1'];
 const THEME_VALUES = new Set(['light', 'dark', 'system']);
 const LANGUAGE_VALUES = new Set(['zh', 'en']);
-const VIEW_VALUES = new Set(['dashboard', 'settings', 'terminal', 'history']);
+const VIEW_VALUES = new Set(['dashboard', 'settings', 'terminal', 'history', 'traffic-detail']);
 const COMPACT_SHELL_VALUES = new Set(['powershell', 'cmd', 'bash']);
 const INTEGRATION_IDS = ['quick', 'cli', 'vscode', 'claude-desktop'];
 
@@ -910,6 +910,8 @@ function cacheDom() {
     dom.inputUpstream = document.getElementById('upstream-input');
     dom.inputThinkingBudget = document.getElementById('thinking-budget-input');
     dom.inputRateLimit = document.getElementById('rate-limit-input');
+    dom.inputQuotaCookie = document.getElementById('quota-cookie-input');
+    dom.inputQuotaWorkspace = document.getElementById('quota-workspace-input');
     dom.inputRateBurst = document.getElementById('rate-burst-input');
     dom.inputRateMinute = document.getElementById('rate-minute-input');
     dom.inputClaudeEnvTemplate = document.getElementById('claude-env-template-input');
@@ -975,7 +977,6 @@ function cacheDom() {
         });
     }
     dom.btnCancelConfig = document.getElementById('cancel-config-btn');
-    dom.btnInstallEnv = document.getElementById('install-env-btn');
     dom.btnRepairAll = document.getElementById('repair-all-btn');
 
     // System Environment Card
@@ -1015,14 +1016,6 @@ function cacheDom() {
     dom.syncCliDot = document.getElementById('sync-cli-dot');
     dom.syncVscodeDot = document.getElementById('sync-vscode-dot');
     dom.syncClaudeDot = document.getElementById('sync-claude-dot');
-
-    // History
-    dom.tbodyHistory = document.getElementById('history-tbody');
-    dom.clearHistoryBtn = document.getElementById('clear-history-btn');
-    dom.sourceFilterSelect = document.getElementById('sourceFilterSelect');
-    dom.historyFilterCount = document.getElementById('history-filter-count');
-    dom.tokenProfileLabel = document.getElementById('token-profile-label');
-    dom.tokenLogLabel = document.getElementById('token-log-label');
 
     // Header & footer
     dom.statusPill = document.getElementById('statusPill');
@@ -1322,6 +1315,7 @@ async function resolveApiBase() {
         const addr = await callWails('GetListenAddress');
 
         if (addr) API_BASE = `http://${addr}`;
+        if (window.setTrafficApiBase) window.setTrafficApiBase(API_BASE);
 
     } catch (err) { console.error('Wails GetListenAddress error:', err); }
 
@@ -1544,7 +1538,7 @@ async function initializeApp() {
 
     // Fetch local auth token from Wails (silently fails in browser mode)
 
-    try { const t = await callWails('GetLocalToken'); if (t) LOCAL_AUTH_TOKEN = t; } catch (_) { }
+    try { const t = await callWails('GetLocalToken'); if (t) { LOCAL_AUTH_TOKEN = t; window.LOCAL_AUTH_TOKEN = t; } } catch (_) { }
 
 
 
@@ -1568,7 +1562,7 @@ async function initializeApp() {
     }
     setProxyConnectionState('online');
     try {
-        const results = await Promise.allSettled([loadStatus(), loadProfiles(), loadHistory(), loadPreferences()]);
+        const results = await Promise.allSettled([loadStatus(), loadProfiles(), loadPreferences()]);
         const statusOK = results[0].status === 'fulfilled' && results[0].value;
         if (!statusOK) {
             const healthy = await isProxyHealthy();
@@ -1819,7 +1813,6 @@ async function loadStatus() {
 
         renderCompactEnvCode();
         updateConfigSyncStrip();
-        updateTokenContext();
         updateRateLimitDisplay();
         updateLastUpdated();
         showDashboardContent();
@@ -1855,22 +1848,6 @@ async function loadStatus() {
 
 let currentHistoryData = [];
 
-async function loadHistory() {
-    try {
-        const resp = await apiFetch('/ocgt/api/history');
-        if (!resp.ok) throw new Error('Failed to load history');
-        const data = await resp.json();
-        currentHistoryData = data;
-        renderHistory(data);
-    } catch (err) {
-        console.error('Error loading history:', err);
-        if (!(await isProxyHealthy())) {
-            proxyReady = false;
-            setProxyConnectionState('offline');
-        }
-        return false;
-    }
-}
 
 async function loadProfiles() {
     try {
@@ -1893,6 +1870,8 @@ async function loadProfiles() {
             setSelectValue(dom.inputSonnetMapping, aliases.sonnet || '');
             setSelectValue(dom.inputHaikuMapping, aliases.haiku || '');
             setSelectValue(dom.inputOpusMapping, aliases.opus || '');
+            if (dom.inputQuotaCookie) dom.inputQuotaCookie.value = activeProfile.quota_cookie || ''; 
+            if (dom.inputQuotaWorkspace) dom.inputQuotaWorkspace.value = activeProfile.quota_workspace_id || '';
         }
         captureOriginalSettings();
 
@@ -1929,10 +1908,10 @@ async function loadPreferences() {
             dom.inputLogDirectory.value = (prefs && prefs.log_directory) || '';
         }
         if (dom.inputLogRetention) {
-            dom.inputLogRetention.value = (prefs && prefs.log_retention_days) || '14';
+            const savedVal = prefs && prefs.log_retention_days;
+            dom.inputLogRetention.value = (savedVal !== undefined && savedVal !== null && savedVal !== '' && savedVal !== false) ? String(savedVal) : '14';
         }
         applyUIPreferences(prefs || {});
-        updateTokenContext();
         captureOriginalSettings();
     } catch (err) {
         console.error('Failed to load preferences:', err);
@@ -1980,6 +1959,8 @@ function getSettingsSnapshot() {
         rateLimit: dom.inputRateLimit ? dom.inputRateLimit.value : '',
         rateBurst: dom.inputRateBurst ? dom.inputRateBurst.value : '',
         rateMinute: dom.inputRateMinute ? dom.inputRateMinute.value : '',
+        quotaCookie: dom.inputQuotaCookie ? dom.inputQuotaCookie.value : '',
+        quotaWorkspace: dom.inputQuotaWorkspace ? dom.inputQuotaWorkspace.value : '',
         claudeEnvTemplate: dom.inputClaudeEnvTemplate ? dom.inputClaudeEnvTemplate.value : '',
         envDisableNonEssential: dom.envDisableNonEssential ? dom.envDisableNonEssential.checked : true,
         envEnableToolSearch: dom.envEnableToolSearch ? dom.envEnableToolSearch.checked : true,
@@ -2012,6 +1993,8 @@ function restoreSettingsFromSnapshot(snapshot) {
     if (dom.inputRateLimit) dom.inputRateLimit.value = snapshot.rateLimit || '';
     if (dom.inputRateBurst) dom.inputRateBurst.value = snapshot.rateBurst || '';
     if (dom.inputRateMinute) dom.inputRateMinute.value = snapshot.rateMinute || '';
+    if (dom.inputQuotaCookie) dom.inputQuotaCookie.value = snapshot.quotaCookie || '';
+    if (dom.inputQuotaWorkspace) dom.inputQuotaWorkspace.value = snapshot.quotaWorkspace || '';
     if (dom.inputClaudeEnvTemplate) dom.inputClaudeEnvTemplate.value = snapshot.claudeEnvTemplate || '{}';
     if (dom.inputCloseBehavior) dom.inputCloseBehavior.value = normalizeCloseBehavior(snapshot.closeBehavior);
     clearFieldErrors();
@@ -2040,18 +2023,6 @@ function setSyncState(textEl, dotEl, active, label) {
             dotEl.style.background = '';
             dotEl.style.boxShadow = '';
         }
-    }
-}
-
-function updateTokenContext() {
-    if (dom.tokenProfileLabel) {
-        const profile = systemStatus && systemStatus.active_profile ? systemStatus.active_profile : '-';
-        dom.tokenProfileLabel.textContent = `Profile: ${profile}`;
-    }
-    if (dom.tokenLogLabel) {
-        const enabled = !dom.inputLogEnabled || dom.inputLogEnabled.checked;
-        dom.tokenLogLabel.textContent = enabled ? t('token_log_on') : t('token_log_off');
-        dom.tokenLogLabel.classList.toggle('inactive', !enabled);
     }
 }
 
@@ -2097,235 +2068,11 @@ function clearChangesDetected() {
 
 // Client integrations code renderers are handled dynamically inside integrations-grid section
 
-function formatTokens(num) {
-    if (typeof num === 'string') {
-        const parsed = Number(num);
-        if (!isNaN(parsed)) num = parsed;
-        else return num;
-    }
-    if (typeof num !== 'number') return '-';
-    if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
-    if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
-    return String(num);
-}
 
-function historySourceMatches(entry, filter) {
-    if (filter === 'all') return true;
-    const src = String(entry.client || entry.client_source || '').toLowerCase();
-    if (filter === 'vscode') return src.includes('vs code') || src.includes('vscode');
-    if (filter === 'cli') return src.includes('cli');
-    if (filter === 'desktop') return src.includes('claude app') || src.includes('desktop') || src.includes('桌面');
-    return true;
-}
 
-function updateHistoryFilterCount(shown, total) {
-    if (!dom.historyFilterCount) return;
-    dom.historyFilterCount.textContent = t('traf_filter_count')
-        .replace('{{shown}}', String(shown))
-        .replace('{{total}}', String(total));
-}
 
-function renderHistoryEmptyState(messageKey) {
-    const message = escapeHtml(t(messageKey));
-    dom.tbodyHistory.innerHTML = `<tr class="empty-row"><td colspan="9"><div class="empty-state"><div class="empty-state-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></div><span>${message}</span></div></td></tr>`;
-}
 
-function renderHistory(data) {
-    if (!dom.tbodyHistory) return;
-    const rows = Array.isArray(data) ? data : [];
-    updateTrafficStats(rows);
-    const sourceFilter = dom.sourceFilterSelect ? dom.sourceFilterSelect.value : 'all';
-    const filteredData = rows.filter(entry => historySourceMatches(entry, sourceFilter));
-    updateHistoryFilterCount(filteredData.length, rows.length);
 
-    if (!filteredData || filteredData.length === 0) {
-        renderHistoryEmptyState(rows.length > 0 ? 'traf_empty_filtered' : 'traf_empty');
-        return;
-    }
-
-    dom.tbodyHistory.innerHTML = filteredData.map(log => {
-
-        const time = formatTime(new Date(log.time));
-
-        const badge = statusBadge(log.status);
-
-        const tokens = log.tokens || log.total_tokens || '-';
-
-        return `<tr>
-
-            <td class="time-cell">${time}</td>
-
-            <td class="method">${escapeHtml(log.method)}</td>
-
-            <td class="path-cell" title="${escapeHtml(log.path)}">${escapeHtml(log.path)}</td>
-
-            <td class="model-cell">${escapeHtml(log.model || '-')}</td>
-
-            <td class="client-cell">${escapeHtml(log.client || t('client_unknown'))}</td>
-
-            <td>${badge}</td>
-
-            <td class="duration-cell">${escapeHtml(log.duration)}</td>
-
-            <td class="tokens-cell">${escapeHtml(formatTokens(tokens))}</td>
-
-            <td class="error-cell" title="${escapeHtml(log.error || '')}">${escapeHtml(log.error || '-')}</td>
-
-        </tr>`;
-
-    }).join('');
-
-}
-
-function updateTrafficStats(logs) {
-
-    const totalEl = document.getElementById('traffic-stat-total');
-
-    const successEl = document.getElementById('traffic-stat-success');
-
-    const latencyEl = document.getElementById('traffic-stat-latency');
-
-    const tokensEl = document.getElementById('traffic-stat-tokens');
-
-    const tokenBarInput = document.getElementById('token-bar-input');
-
-    const tokenBarOutput = document.getElementById('token-bar-output');
-
-    const tokenInputCount = document.getElementById('token-input-count');
-
-    const tokenOutputCount = document.getElementById('token-output-count');
-
-    const tokenCacheCount = document.getElementById('token-cache-count');
-
-    const tokenBarTotalLabel = document.getElementById('token-bar-total-label');
-    const limitEl = document.getElementById('traffic-stat-limit');
-
-
-
-    if (!totalEl || !successEl || !latencyEl) return;
-
-    if (!logs || logs.length === 0) {
-
-        totalEl.textContent = '0';
-
-        successEl.textContent = '100.0%';
-
-        latencyEl.textContent = '0ms';
-
-        if (tokensEl) tokensEl.textContent = '0';
-
-        if (tokenBarInput) tokenBarInput.style.width = '50%';
-
-        if (tokenBarOutput) tokenBarOutput.style.width = '50%';
-
-        if (tokenInputCount) tokenInputCount.textContent = '0';
-
-        if (tokenOutputCount) tokenOutputCount.textContent = '0';
-
-        if (tokenCacheCount) tokenCacheCount.textContent = '0';
-
-        if (tokenBarTotalLabel) tokenBarTotalLabel.textContent = t('token_total_label').replace('{{count}}', '0');
-        updateRateLimitDisplay();
-
-        return;
-
-    }
-
-    const total = logs.length;
-
-    let successCount = 0, totalLatencyMs = 0;
-
-    let totalInputTokens = 0, totalOutputTokens = 0, totalCacheReadTokens = 0, totalCacheCreationTokens = 0;
-
-
-
-    logs.forEach(log => {
-
-        if (log.status >= 200 && log.status < 300) successCount++;
-
-        totalLatencyMs += parseDurationToMs(log.duration);
-
-
-
-        // Accumulate token stats
-
-        if (log.input_tokens) totalInputTokens += log.input_tokens;
-
-        if (log.output_tokens) totalOutputTokens += log.output_tokens;
-
-        if (log.cache_read_tokens) totalCacheReadTokens += log.cache_read_tokens;
-
-        if (log.cache_creation_tokens) totalCacheCreationTokens += log.cache_creation_tokens;
-
-    });
-
-
-
-    totalEl.textContent = total.toString();
-
-    successEl.textContent = `${((successCount / total) * 100).toFixed(1)}%`;
-
-    latencyEl.textContent = `${Math.round(totalLatencyMs / total)}ms`;
-
-
-
-    // Update token stats
-
-    const totalCacheTokens = totalCacheReadTokens + totalCacheCreationTokens;
-    const totalTokens = totalInputTokens + totalOutputTokens + totalCacheTokens;
-
-    if (tokensEl) tokensEl.textContent = totalTokens.toLocaleString();
-
-    if (tokenInputCount) tokenInputCount.textContent = totalInputTokens.toLocaleString();
-
-    if (tokenOutputCount) tokenOutputCount.textContent = totalOutputTokens.toLocaleString();
-
-    if (tokenCacheCount) tokenCacheCount.textContent = totalCacheTokens.toLocaleString();
-
-    if (tokenBarTotalLabel) tokenBarTotalLabel.textContent = t('token_total_label').replace('{{count}}', totalTokens.toLocaleString());
-    if (limitEl) updateRateLimitDisplay();
-
-
-
-    // Calculate bar widths
-
-    if (tokenBarInput && tokenBarOutput && totalTokens > 0) {
-
-        const inputPercent = (totalInputTokens / totalTokens) * 100;
-
-        const outputPercent = (totalOutputTokens / totalTokens) * 100;
-
-        tokenBarInput.style.width = `${inputPercent}%`;
-
-        tokenBarOutput.style.width = `${outputPercent}%`;
-
-    } else if (tokenBarInput && tokenBarOutput) {
-
-        tokenBarInput.style.width = '50%';
-
-        tokenBarOutput.style.width = '50%';
-
-    }
-
-}
-
-function parseDurationToMs(str) {
-    if (!str) return 0;
-    str = str.toLowerCase().trim();
-    if (str.endsWith('ms')) return parseFloat(str.replace('ms', '')) || 0;
-    if (str.endsWith('s')) return (parseFloat(str.replace('s', '')) * 1000) || 0;
-    return parseFloat(str) || 0;
-}
-
-function formatTime(d) {
-    return `${padTwo(d.getHours())}:${padTwo(d.getMinutes())}:${padTwo(d.getSeconds())}`;
-}
-
-function statusBadge(code) {
-    if (code >= 200 && code < 300) return `<span class="badge-ok">${code}</span>`;
-    if (code >= 400 && code < 500) return `<span class="badge-warn">${code}</span>`;
-    return `<span class="badge-err">${code}</span>`;
-}
 
 function setButtonState(btn, state) {
     if (state === 'saving') {
@@ -2470,7 +2217,8 @@ function updateActiveViewHeaders() {
         dashboard: { title: t('title_dashboard'), subtitle: t('subtitle_dashboard') },
         settings: { title: t('title_settings'), subtitle: t('subtitle_settings') },
         terminal: { title: t('title_terminal'), subtitle: t('subtitle_terminal') },
-        history: { title: t('title_history'), subtitle: t('subtitle_history') }
+        history: { title: t('title_history'), subtitle: t('subtitle_history') },
+        'traffic-detail': { title: '流量明细', subtitle: '查看所有请求的详细记录' }
     }[viewId];
     if (meta) {
         titleEl.textContent = meta.title;
@@ -2489,6 +2237,10 @@ function setActiveView(viewId, options = {}) {
     const targetView = document.getElementById(`view-${viewId}`);
     if (targetView) targetView.classList.add('active');
     updateActiveViewHeaders();
+    // Init traffic detail on first activation
+    if (viewId === 'traffic-detail' && typeof initTrafficDetail === 'function') {
+      initTrafficDetail();
+    }
     if (options.persist !== false) {
         localStorage.setItem('last-view', viewId);
         persistUIPreferencesSoon();
@@ -2530,7 +2282,7 @@ function setupNavigation() {
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
         if (e.ctrlKey || e.metaKey) {
-            const viewMap = { '1': 'dashboard', '2': 'settings', '3': 'terminal', '4': 'history' };
+            const viewMap = { '1': 'dashboard', '2': 'settings', '3': 'terminal', '4': 'history', '5': 'traffic-detail' };
             const viewId = viewMap[e.key];
             if (viewId) {
                 e.preventDefault();
@@ -2549,39 +2301,6 @@ function setupNavigation() {
 
     if (dom.btnNavHistory) {
         dom.btnNavHistory.addEventListener('click', () => setActiveView('history'));
-    }
-    
-    const btnNavSyslog = document.getElementById('btn-nav-syslog');
-    const sysLogModalOverlay = document.getElementById('sysLogModalOverlay');
-    const btnRefreshSysLog = document.getElementById('btnRefreshSysLog');
-    const sysLogContent = document.getElementById('sysLogContent');
-    const sysLogModalClose = document.getElementById('sysLogModalClose');
-
-    const fetchSysLog = async () => {
-        if (!sysLogContent) return;
-        try {
-            sysLogContent.textContent = "Loading logs...";
-            const resp = await apiFetch('/ocgt/api/syslog');
-            if (!resp.ok) throw new Error("fetch error");
-            const data = await resp.json();
-            sysLogContent.textContent = data.log || "No logs available.";
-            sysLogContent.scrollTop = sysLogContent.scrollHeight; // auto scroll to bottom
-        } catch (e) {
-            sysLogContent.textContent = "Failed to load logs.";
-        }
-    };
-
-    if (btnNavSyslog && sysLogModalOverlay) {
-        btnNavSyslog.addEventListener('click', () => {
-            showModal(sysLogModalOverlay);
-            fetchSysLog();
-        });
-    }
-    if (btnRefreshSysLog) btnRefreshSysLog.addEventListener('click', fetchSysLog);
-    if (sysLogModalClose && sysLogModalOverlay) {
-        sysLogModalClose.addEventListener('click', () => {
-            hideModal(sysLogModalOverlay);
-        });
     }
 }
 
@@ -2773,7 +2492,7 @@ async function saveLogPreferences(showToast) {
     const enabled = !!(dom.inputLogEnabled && dom.inputLogEnabled.checked);
     const directory = dom.inputLogDirectory ? dom.inputLogDirectory.value.trim() : '';
     const retention = Number(dom.inputLogRetention ? dom.inputLogRetention.value : 14);
-    if (!Number.isInteger(retention) || retention < 1 || retention > 365) {
+    if (!Number.isInteger(retention) || retention < 0 || retention > 365) {
         if (showToast) toast(t('toast_log_prefs_failed') + ': 1-365', 'error');
         return false;
     }
@@ -2782,7 +2501,6 @@ async function saveLogPreferences(showToast) {
         if (res === 'success') {
             if (showToast) toastI18n('toast_log_prefs_saved', 'success');
             await loadPreferences();
-            updateTokenContext();
             return true;
         } else if (showToast) {
             toast(t('toast_log_prefs_failed') + ': ' + res, 'error');
@@ -2809,6 +2527,8 @@ async function handleSaveConfig() {
     const rateLimit = dom.inputRateLimit ? dom.inputRateLimit.value.trim() : '';
     const rateBurst = dom.inputRateBurst ? dom.inputRateBurst.value.trim() : '';
     const rateMinute = dom.inputRateMinute ? dom.inputRateMinute.value.trim() : '';
+    const quotaCookie = dom.inputQuotaCookie ? dom.inputQuotaCookie.value.trim() : '';
+    const quotaWorkspace = dom.inputQuotaWorkspace ? dom.inputQuotaWorkspace.value.trim() : '';
     const timeoutNumber = Number(timeoutSeconds);
     const rateLimitNumber = rateLimit ? Number(rateLimit) : 0;
     const rateBurstNumber = rateBurst ? Number(rateBurst) : 0;
@@ -2876,7 +2596,7 @@ async function handleSaveConfig() {
     if (app) {
         try {
             const claudeEnvJSON = JSON.stringify(claudeEnvTemplate);
-            const res = await app.SaveProfileConfig(pName, key, defModel, sonnet, haiku, opus, timeoutSeconds, thinkingBudget, listenAddr, upstream, rateLimit, rateBurst, rateMinute || '0', claudeEnvJSON);
+            const res = await app.SaveProfileConfig(pName, key, defModel, sonnet, haiku, opus, timeoutSeconds, thinkingBudget, listenAddr, upstream, rateLimit, rateBurst, rateMinute || '0', claudeEnvJSON, quotaCookie, quotaWorkspace);
             if (res === 'success') {
                 if (dom.inputCloseBehavior && typeof app.SavePreferences === 'function') {
                     const prefRes = await app.SavePreferences(normalizeCloseBehavior(dom.inputCloseBehavior.value));
@@ -3454,26 +3174,6 @@ async function handleClearClaudeDesktopApp() {
 
 // ── 12e: History ──
 function setupHistoryHandlers() {
-    if (dom.sourceFilterSelect) {
-        dom.sourceFilterSelect.addEventListener('change', () => renderHistory(currentHistoryData));
-    }
-    if (dom.clearHistoryBtn) {
-        dom.clearHistoryBtn.addEventListener('click', async () => {
-            try {
-                const resp = await apiFetch('/ocgt/api/history', { method: 'DELETE' });
-                if (resp.ok) {
-                    currentHistoryData = [];
-                    renderHistory([]);
-                    toastI18n('toast_history_cleared', 'success');
-                }
-            } catch (err) {
-                console.error('Clear history failed:', err);
-                currentHistoryData = [];
-                renderHistory([]);
-                toastI18n('toast_history_cleared', 'success');
-            }
-        });
-    }
 }
 
 // ── 12f: Theme & preferences center panel ──
@@ -3764,6 +3464,7 @@ function setupWailsEvents() {
     window.runtime.EventsOn('proxy-restarted', (addr) => {
 
         API_BASE = `http://${addr}`;
+        if (window.setTrafficApiBase) window.setTrafficApiBase(API_BASE);
 
         proxyReady = false;
 
@@ -3773,15 +3474,21 @@ function setupWailsEvents() {
 
     });
 
-    window.runtime.EventsOn('proxy-error', (errMsg) => {
+	    window.runtime.EventsOn('proxy-error', (errMsg) => {
 
-        console.error('[ocgt] proxy error:', errMsg);
+	        console.error('[ocgt] proxy error:', errMsg);
 
-        proxyReady = false;
+	        proxyReady = false;
 
-        setProxyConnectionState('offline', errMsg);
+	        setProxyConnectionState('offline', errMsg);
 
-    });
+	        // If loading overlay is still showing, show error immediately
+	        const overlay = dom.loadingOverlay || document.getElementById('loadingOverlay');
+	        if (overlay && !overlay.classList.contains('hidden')) {
+	            showLoadingOverlay(false, true, errMsg);
+	        }
+
+	    });
 
 }
 
@@ -3828,6 +3535,56 @@ function setupEnvRepairHandlers() {
 
 // ══════════════════════════════════════════════════════
 
+// Quota fetching and rendering
+async function fetchAndRenderQuota() {
+    const bars = document.getElementById('quota-bars');
+    const time = document.getElementById('quota-refresh-time');
+    const label = document.getElementById('quota-label');
+    if (!bars) return;
+
+    try {
+        const result = await window['go']['main']['App']['FetchQuota']();
+        if (!result.success) {
+            bars.innerHTML = `<span class="quota-error">${result.error || '未知错误'}</span>`;
+            if (time) time.textContent = '';
+            return;
+        }
+        const d = result.data;
+        if (!d) {
+            bars.innerHTML = '<span class="quota-loading">无数据</span>';
+            return;
+        }
+        let html = '';
+        html += buildQuotaRow('Rolling', 'rolling', d.rolling.usage_percent, d.rolling.reset_display);
+        html += buildQuotaRow('Weekly', 'weekly', d.weekly.usage_percent, d.weekly.reset_display);
+        if (d.monthly) {
+            html += buildQuotaRow('Monthly', 'monthly', d.monthly.usage_percent, d.monthly.reset_display);
+        } else {
+            html += `<div class="quota-row"><span class="quota-row-label" style="color:#4ECDC4">Monthly</span><span style="color:var(--text-muted, #8b949e);font-size:13px">Unlimited</span></div>`;
+        }
+        bars.innerHTML = html;
+        if (time) {
+            const t = new Date(d.fetched_at);
+            time.textContent = t.toLocaleTimeString();
+        }
+        if (label) label.textContent = 'OpenCode Go 套餐额度';
+    } catch (e) {
+        bars.innerHTML = `<span class="quota-error">获取额度失败: ${e}</span>`;
+        if (time) time.textContent = '';
+    }
+}
+
+function buildQuotaRow(name, cls, pct, reset) {
+    const colors = { rolling: '#FF6B6B', weekly: '#FFE66D', monthly: '#4ECDC4' };
+    const c = colors[cls] || '#888';
+    return `<div class="quota-row">
+        <span class="quota-row-label" style="color:${c}">${name}</span>
+        <div class="quota-row-bar"><div class="quota-row-fill ${cls}" style="width:${pct}%"></div></div>
+        <span class="quota-row-pct">${pct}%</span>
+        <span class="quota-row-reset">${reset}</span>
+    </div>`;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
 
     cacheDom();
@@ -3856,12 +3613,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Polling: refresh history when online, otherwise try to reconnect
     const pollInterval = setInterval(async () => {
-        if (proxyReady) { await loadHistory(); }
+        if (proxyReady) { /* handled by traffic.js */ }
         else { await initializeApp(); }
     }, 5000);
+
+    // Quota: auto-fetch on startup and every 60s, plus manual refresh button
+    let quotaInterval = null;
+    async function initQuotaPolling() {
+        if (typeof window['go'] !== 'undefined' && window['go']['main'] && window['go']['main']['App']['FetchQuota']) {
+            await fetchAndRenderQuota();
+            quotaInterval = setInterval(fetchAndRenderQuota, 5000);
+        }
+    }
+    setTimeout(initQuotaPolling, 3000);
+
+    const quotaBtn = document.getElementById('btn-refresh-quota');
+    if (quotaBtn) quotaBtn.addEventListener('click', fetchAndRenderQuota);
 
     // Clean up interval on page unload
     window.addEventListener('beforeunload', () => {
         clearInterval(pollInterval);
+        if (quotaInterval) clearInterval(quotaInterval);
     });
 });

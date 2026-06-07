@@ -142,8 +142,8 @@ func (p Preferences) Validate() error {
 	if strings.TrimSpace(p.LogDirectory) == "" {
 		return fmt.Errorf("log_directory is required")
 	}
-	if p.LogRetentionDays < 1 || p.LogRetentionDays > 365 {
-		return fmt.Errorf("log_retention_days must be between 1 and 365, got %d", p.LogRetentionDays)
+	if p.LogRetentionDays < 0 || p.LogRetentionDays > 365 {
+		return fmt.Errorf("log_retention_days must be 0 (unlimited) or between 1 and 365, got %d", p.LogRetentionDays)
 	}
 	if !IsValidTheme(p.Theme) {
 		return fmt.Errorf("invalid theme %q, must be 'light', 'dark', or 'system'", p.Theme)
