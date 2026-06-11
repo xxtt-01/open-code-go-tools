@@ -101,10 +101,14 @@ jobs:
             ocgt ${{ github.ref_name }} 版本说明
 
             更新日志 (Changelog):
-            - 增加对 macOS 和 Linux 系统的原生二进制打包支持
-            - 新增在线同步功能，可直接获取最新官方可用模型
-            - 修复开启流式传输 (Streaming) 时无法统计 Token 消耗量的问题
-            - 优化文档与发布文本
+
+            - **费用估算双重计费（严重）**：`EstimateCost` 对缓存读取的 tokens 既按全价计费又按缓存价计费，导致有缓存的请求费用虚高约 2-23 倍
+            - **`extractUsageFromAnthropicStream` 缺字段**：只解析 `message_delta`，遗漏 `message_start` 中的 `input_tokens` / `cache` 字段
+            - **重试导致请求次数虚高**：每次重试失败都写入历史记录，1 次请求最多被计 6 次，修复后仅终态记录
+            - **`modelBreakdown` 缓存命中率误含写入**：命中率分子改为只使用 `CacheRead`
+            - **流式 `message_delta` 缺 `input_tokens`**：OpenAI → Anthropic 合成消息补全 `input_tokens`
+            - **流量界面选择"今日"时间窗口错误**：使用 `time.Now()` 导致近 24h，修复为当日 00:00 基准
+            详细信息见 [RELEASE_NOTES.md](https://github.com/${{ github.repository }}/blob/main/RELEASE_NOTES.md)
           files: |
             dist/*
           generate_release_notes: false
