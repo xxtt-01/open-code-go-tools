@@ -155,7 +155,10 @@ func (s *Server) readJSONLLogs(days int) []requestLogEntry {
 		dir = filepath.Join(home, ".ocgt", "log")
 	}
 
-	cutoff := time.Now().AddDate(0, 0, -days)
+	// 以当日 00:00:00 为基准，向前推 (days-1) 天，确保 "今日"(days=1) 只覆盖当天
+	now := time.Now()
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	cutoff := startOfToday.AddDate(0, 0, -(days - 1))
 	var allEntries []requestLogEntry
 
 	files, err := os.ReadDir(dir)
@@ -188,7 +191,7 @@ log.Printf("[stats] readJSONLLogs: reading %q, found %d files, cutoff %s", dir, 
 		copy(hist, s.history)
 		s.historyMu.RUnlock()
 		if len(hist) > 0 {
-			cutoff := time.Now().AddDate(0, 0, -days)
+			cutoff := startOfToday.AddDate(0, 0, -(days - 1))
 			for _, e := range hist {
 				if e.Time.After(cutoff) {
 					allEntries = append(allEntries, e)
@@ -228,20 +231,24 @@ func readJSONLFile(path string, cutoff time.Time) []requestLogEntry {
 }
 
 func emptyStats(days int) StatsSummary {
+	now := time.Now()
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	return StatsSummary{
 		Period: PeriodInfo{
-			From: time.Now().AddDate(0, 0, -days).Format("2006-01-02"),
-			To:   time.Now().Format("2006-01-02"),
+			From: startOfToday.AddDate(0, 0, -(days - 1)).Format("2006-01-02"),
+			To:   now.Format("2006-01-02"),
 			Days: days,
 		},
 	}
 }
 
 func aggregateStats(entries []requestLogEntry, days int) StatsSummary {
+	now := time.Now()
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	result := StatsSummary{
 		Period: PeriodInfo{
-			From: time.Now().AddDate(0, 0, -days).Format("2006-01-02"),
-			To:   time.Now().Format("2006-01-02"),
+			From: startOfToday.AddDate(0, 0, -(days - 1)).Format("2006-01-02"),
+			To:   now.Format("2006-01-02"),
 			Days: days,
 		},
 	}
