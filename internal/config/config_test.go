@@ -247,6 +247,30 @@ func TestAPIKeyValue(t *testing.T) {
 	}
 }
 
+func TestEffectiveAuthMode(t *testing.T) {
+	tests := []struct {
+		name string
+		mode string
+		want string
+	}{
+		{"empty_defaults_to_bearer", "", DefaultAuthMode},
+		{"bearer", "bearer", AuthModeBearer},
+		{"x-api-key", "x-api-key", AuthModeAPIKey},
+		{"both", "both", AuthModeBoth},
+		{"uppercase_normalized", "X-API-KEY", AuthModeAPIKey},
+		{"whitespace_trimmed", "  Both  ", AuthModeBoth},
+		{"unknown_falls_back", "weird", DefaultAuthMode},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Profile{AuthMode: tc.mode}
+			if got := p.EffectiveAuthMode(); got != tc.want {
+				t.Fatalf("EffectiveAuthMode() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSavePreservesUnknownFields(t *testing.T) {
 	// Create a temporary file with unknown fields
 	tmpFile := t.TempDir() + "/config.json"

@@ -23,6 +23,12 @@ const (
 	DefaultRateLimitPerSecond      = 100
 	DefaultRateLimitBurst          = 200
 	DefaultRateLimitPerMinute      = 0 // 0 means unlimited
+
+	// AuthMode values control how the proxy authenticates against an upstream.
+	AuthModeBearer  = "bearer"    // Send only Authorization: Bearer (OpenAI-compatible gateways, e.g. opencode.ai/zen/go)
+	AuthModeAPIKey  = "x-api-key" // Send only X-Api-Key + Anthropic-Version (genuine Anthropic API / new-api style gateways)
+	AuthModeBoth    = "both"      // Send both headers (compatibility fallback for ambiguous upstreams)
+	DefaultAuthMode = AuthModeBearer
 )
 
 type Config struct {
@@ -50,15 +56,16 @@ type Config struct {
 // support Anthropic's prompt caching metrics. This affects used_percentage
 // calculations in downstream tools like Claude Code's status line.
 type Profile struct {
-	APIKeyEnv     string            `json:"api_key_env"`       // Environment variable name for API key
-	APIKey        string            `json:"api_key,omitempty"` // Direct API key (takes precedence over APIKeyEnv)
-	DefaultModel  string            `json:"default_model,omitempty"`
-	ModelAliases  map[string]string `json:"model_aliases,omitempty"`  // Model name mappings (e.g., "sonnet" -> "deepseek-v4-pro")
-	MessageModels []string          `json:"message_models,omitempty"` // Models using Anthropic native endpoint (bypass OpenAI conversion)
-	FallbackChain []string          `json:"fallback_chain,omitempty"` // Automatic fallback models on failure
-	Headers       map[string]string `json:"headers,omitempty"`        // Custom headers for upstream requests
-	QuotaCookie   string            `json:"quota_cookie,omitempty"`   // OpenCode Go auth cookie for quota display
-	QuotaWorkspaceID string        `json:"quota_workspace_id,omitempty"` // OpenCode Go workspace ID for quota display
+	APIKeyEnv        string            `json:"api_key_env"`       // Environment variable name for API key
+	APIKey           string            `json:"api_key,omitempty"` // Direct API key (takes precedence over APIKeyEnv)
+	DefaultModel     string            `json:"default_model,omitempty"`
+	ModelAliases     map[string]string `json:"model_aliases,omitempty"`      // Model name mappings (e.g., "sonnet" -> "deepseek-v4-pro")
+	MessageModels    []string          `json:"message_models,omitempty"`     // Models using Anthropic native endpoint (bypass OpenAI conversion)
+	FallbackChain    []string          `json:"fallback_chain,omitempty"`     // Automatic fallback models on failure
+	Headers          map[string]string `json:"headers,omitempty"`            // Custom headers for upstream requests
+	AuthMode         string            `json:"auth_mode,omitempty"`          // How the proxy authenticates to this upstream: "bearer" (default) | "x-api-key" | "both"
+	QuotaCookie      string            `json:"quota_cookie,omitempty"`       // OpenCode Go auth cookie for quota display
+	QuotaWorkspaceID string            `json:"quota_workspace_id,omitempty"` // OpenCode Go workspace ID for quota display
 }
 
 func DefaultPath() (string, error) {
@@ -93,8 +100,8 @@ func Example() Config {
 			"sonnet":   "deepseek-v4-pro",
 			"haiku":    "deepseek-v4-flash",
 		},
-		MessageModels: []string{"minimax-m2.5", "minimax-m2.7"},
-		FallbackChain: []string{"kimi-k2.6", "qwen3.6-plus", "deepseek-v4-flash"},
+		MessageModels:    []string{"minimax-m2.5", "minimax-m2.7"},
+		FallbackChain:    []string{"kimi-k2.6", "qwen3.6-plus", "deepseek-v4-flash"},
 		QuotaCookie:      "${OPENCODE_GO_AUTH_COOKIE}",
 		QuotaWorkspaceID: "${OPENCODE_GO_WORKSPACE_ID}",
 	}
@@ -372,6 +379,19 @@ func (p Profile) APIKeyValue() string {
 		return os.Getenv(p.APIKeyEnv)
 	}
 	return ""
+}
+
+// EffectiveAuthMode returns the normalized auth mode for this profile, falling
+// back to DefaultAuthMode ("bearer") for empty or unrecognized values. Keeping
+// the fallback here (rather than at every call site) guarantees that old config
+// files without an auth_mode field behave exactly as before.
+func (p Profile) EffectiveAuthMode() string {
+	switch strings.ToLower(strings.TrimSpace(p.AuthMode)) {
+	case AuthModeAPIKey, AuthModeBoth:
+		return strings.ToLower(strings.TrimSpace(p.AuthMode))
+	default:
+		return DefaultAuthMode
+	}
 }
 
 // IsMaskedAPIKey returns true if the key appears to be a masked/placeholder value

@@ -327,7 +327,7 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-		applyAnthropicAuth(req, profile)
+	applyAnthropicAuth(req, profile)
 	resp, err := s.clientSnapshot().Do(req)
 	if err != nil {
 		writeProxyError(w, err)
@@ -664,9 +664,9 @@ func (s *Server) forwardAnthropicMessages(w http.ResponseWriter, r *http.Request
 // message_start (input_tokens, cache fields) and message_delta (output_tokens).
 func extractUsageFromAnthropicStream(w http.ResponseWriter, body io.Reader) tokenUsage {
 	var (
-		usage                                     tokenUsage
-		lineBuf                                   strings.Builder
-		capturing , inEvent                       bool
+		usage              tokenUsage
+		lineBuf            strings.Builder
+		capturing, inEvent bool
 	)
 	flusher, _ := w.(http.Flusher)
 
@@ -773,9 +773,10 @@ func (s *Server) forwardChatCompletions(w http.ResponseWriter, r *http.Request, 
 		if payload.Stream {
 			prepareStreamingUpstreamRequest(req)
 		}
-		// Apply Anthropic-style auth (X-Api-Key) for upstreams that require it
-		// (e.g., opencode.ai gateway). Without this, requests via chat/completions
-		// only carry Authorization: Bearer which these upstreams reject with 401.
+		// Apply the profile's configured upstream auth scheme. For the default
+		// "bearer" mode (opencode.ai/zen/go and other OpenAI-compatible gateways)
+		// this is a no-op on Authorization; for "x-api-key"/"both" it adds/sets the
+		// Anthropic-native headers. See applyAnthropicAuth.
 		applyAnthropicAuth(req, profile)
 
 		start := time.Now()
@@ -915,14 +916,42 @@ func prepareStreamingUpstreamRequest(req *http.Request) {
 	req.Header.Set("Accept-Encoding", "identity")
 }
 
+// applyAnthropicAuth applies the profile's configured upstream auth scheme on
+// top of the Authorization: Bearer header already set by newUpstreamRequest.
+// The scheme is chosen via profile.AuthMode (default "bearer"):
+//   - "bearer"   (default): keep Authorization: Bearer only. This is correct
+//     for OpenAI-compatible gateways such as opencode.ai/zen/go. No changes.
+//   - "x-api-key": drop Authorization and send X-Api-Key + Anthropic-Version,
+//     matching the genuine Anthropic API and new-api style gateways.
+//   - "both":      send both (compatibility fallback).
+//
+// This config-driven approach fixes the v2.0.4 regression where Bearer was
+// unconditionally dropped: callers targeting a Bearer upstream simply leave
+// auth_mode at its default and Bearer is preserved. See
+// TestApplyAnthropicAuth* in proxy_test.go.
 func applyAnthropicAuth(req *http.Request, profile config.Profile) {
 	key := profile.APIKeyValue()
 	if key == "" {
 		return
 	}
-	req.Header.Del("Authorization")
-	req.Header.Set("X-Api-Key", key)
-	req.Header.Set("Anthropic-Version", "2023-06-01")
+	switch profile.EffectiveAuthMode() {
+	case config.AuthModeAPIKey:
+		// Genuine Anthropic-native upstream: it expects X-Api-Key and treats a
+		// stray Authorization as ambiguous. Drop Bearer, set X-Api-Key.
+		req.Header.Del("Authorization")
+		req.Header.Set("X-Api-Key", key)
+		req.Header.Set("Anthropic-Version", "2023-06-01")
+	case config.AuthModeBoth:
+		// Compatibility fallback: satisfy either auth scheme. Carries the
+		// auth-ambiguity risk LiteLLM warns about, so opt-in only.
+		req.Header.Set("X-Api-Key", key)
+		req.Header.Set("Anthropic-Version", "2023-06-01")
+	default: // AuthModeBearer
+		// OpenAI-compatible gateway: newUpstreamRequest already set
+		// Authorization: Bearer; nothing to add. Anthropic-Version is harmless
+		// and matches what Claude Code sends, so forward it for compatibility.
+		req.Header.Set("Anthropic-Version", "2023-06-01")
+	}
 }
 
 func (s *Server) attachReasoningContent(messages []openAIMessage) {

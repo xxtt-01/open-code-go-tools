@@ -285,10 +285,10 @@ func TestHealthEndpoint(t *testing.T) {
 		t.Fatalf("health endpoint returned %d", rr.Code)
 	}
 	var result map[string]string
-		if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
-			t.Fatal(err)
-		}
-		if result["status"] != "ok" {
+	if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["status"] != "ok" {
 		t.Fatalf("expected status ok, got %q", result["status"])
 	}
 }
@@ -345,9 +345,9 @@ func TestProfileEndpoint_CustomHeader(t *testing.T) {
 		t.Fatalf("profile endpoint returned %d", rr.Code)
 	}
 	var result map[string]string
-		if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
-			t.Fatal(err)
-		}
+	if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
 	if result["active_profile"] != "custom" {
 		t.Fatalf("expected custom profile, got %q", result["active_profile"])
 	}
@@ -1393,14 +1393,78 @@ func TestMessagesEndpointUsesAnthropicAuth(t *testing.T) {
 	if sawPath != "/v1/messages" {
 		t.Fatalf("upstream path = %q", sawPath)
 	}
-	if sawAPIKey != "test-key" {
-		t.Fatalf("x-api-key = %q", sawAPIKey)
+	if sawAPIKey != "" {
+		t.Fatalf("x-api-key = %q, want empty (default bearer mode must not send it)", sawAPIKey)
 	}
-	if sawBearer != "" {
-		t.Fatalf("authorization should be empty, got %q", sawBearer)
+	// Default AuthMode is "bearer": Authorization: Bearer must be PRESERVED and
+	// X-Api-Key must NOT be sent. Upstreams like the opencode.ai/zen/go gateway
+	// authenticate via Bearer; dropping it (the v2.0.4 regression) caused 401s.
+	if sawBearer != "Bearer test-key" {
+		t.Fatalf("authorization = %q, want Bearer test-key (must be preserved)", sawBearer)
 	}
 	if sawVersion != "2023-06-01" {
 		t.Fatalf("anthropic-version = %q", sawVersion)
+	}
+}
+
+// TestApplyAnthropicAuthModes is the table-driven regression test for the
+// v2.0.4 bug, exercising all three auth modes driven by profile.AuthMode.
+// Default (empty) mode behaves identically to "bearer".
+func TestApplyAnthropicAuthModes(t *testing.T) {
+	tests := []struct {
+		name        string
+		authMode    string
+		wantBearer  string // expected Authorization value ("" = absent)
+		wantAPIKey  string // expected X-Api-Key value ("" = absent)
+		wantVersion string // expected Anthropic-Version value
+	}{
+		{"default_empty_is_bearer", "", "Bearer test-key", "", "2023-06-01"},
+		{"bearer", "bearer", "Bearer test-key", "", "2023-06-01"},
+		{"bearer_uppercase_normalized", "BEARER", "Bearer test-key", "", "2023-06-01"},
+		{"x_api_key", "x-api-key", "", "test-key", "2023-06-01"},
+		{"both", "both", "Bearer test-key", "test-key", "2023-06-01"},
+		{"unknown_falls_back_to_bearer", "weird-mode", "Bearer test-key", "", "2023-06-01"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			profile := config.Profile{APIKey: "test-key", AuthMode: tc.authMode}
+			req := httptest.NewRequest(http.MethodPost, "https://example.com/v1/messages", nil)
+			req.Header.Set("Authorization", "Bearer test-key") // as newUpstreamRequest would
+
+			applyAnthropicAuth(req, profile)
+
+			if got := req.Header.Get("Authorization"); got != tc.wantBearer {
+				t.Fatalf("Authorization = %q, want %q", got, tc.wantBearer)
+			}
+			if got := req.Header.Get("X-Api-Key"); got != tc.wantAPIKey {
+				t.Fatalf("X-Api-Key = %q, want %q", got, tc.wantAPIKey)
+			}
+			if got := req.Header.Get("Anthropic-Version"); got != tc.wantVersion {
+				t.Fatalf("Anthropic-Version = %q, want %q", got, tc.wantVersion)
+			}
+		})
+	}
+}
+
+// TestApplyAnthropicAuthNoKeyIsNoop verifies that with no API key configured,
+// applyAnthropicAuth does not touch headers (so profile.Headers / Bearer win).
+func TestApplyAnthropicAuthNoKeyIsNoop(t *testing.T) {
+	for _, mode := range []string{"", "bearer", "x-api-key", "both"} {
+		profile := config.Profile{AuthMode: mode}
+		req := httptest.NewRequest(http.MethodPost, "https://example.com/v1/messages", nil)
+		req.Header.Set("Authorization", "Bearer preset")
+
+		applyAnthropicAuth(req, profile)
+
+		if got := req.Header.Get("X-Api-Key"); got != "" {
+			t.Fatalf("mode=%q X-Api-Key = %q, want empty when no key configured", mode, got)
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer preset" {
+			t.Fatalf("mode=%q Authorization = %q, want unchanged \"Bearer preset\"", mode, got)
+		}
+		if got := req.Header.Get("Anthropic-Version"); got != "" {
+			t.Fatalf("mode=%q Anthropic-Version = %q, want empty when no key", mode, got)
+		}
 	}
 }
 
@@ -1442,11 +1506,13 @@ func TestChatCompletionsEndpointUsesAnthropicAuth(t *testing.T) {
 	if sawPath != "/v1/chat/completions" {
 		t.Fatalf("upstream path = %q", sawPath)
 	}
-	if sawAPIKey != "test-key" {
-		t.Fatalf("x-api-key = %q, expected test-key", sawAPIKey)
+	if sawAPIKey != "" {
+		t.Fatalf("x-api-key = %q, want empty (default bearer mode must not send it)", sawAPIKey)
 	}
-	if sawBearer != "" {
-		t.Fatalf("authorization should be empty (replaced by X-Api-Key), got %q", sawBearer)
+	// Default AuthMode is "bearer": Authorization: Bearer must be PRESERVED and
+	// X-Api-Key must NOT be sent.
+	if sawBearer != "Bearer test-key" {
+		t.Fatalf("authorization = %q, want \"Bearer test-key\" (must be preserved)", sawBearer)
 	}
 	if sawVersion != "2023-06-01" {
 		t.Fatalf("anthropic-version = %q, expected 2023-06-01", sawVersion)

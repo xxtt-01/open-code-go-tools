@@ -102,12 +102,9 @@ jobs:
 
             更新日志 (Changelog):
 
-            - **费用估算双重计费（严重）**：`EstimateCost` 对缓存读取的 tokens 既按全价计费又按缓存价计费，导致有缓存的请求费用虚高约 2-23 倍
-            - **`extractUsageFromAnthropicStream` 缺字段**：只解析 `message_delta`，遗漏 `message_start` 中的 `input_tokens` / `cache` 字段
-            - **重试导致请求次数虚高**：每次重试失败都写入历史记录，1 次请求最多被计 6 次，修复后仅终态记录
-            - **`modelBreakdown` 缓存命中率误含写入**：命中率分子改为只使用 `CacheRead`
-            - **流式 `message_delta` 缺 `input_tokens`**：OpenAI → Anthropic 合成消息补全 `input_tokens`
-            - **流量界面选择"今日"时间窗口错误**：使用 `time.Now()` 导致近 24h，修复为当日 00:00 基准
+            - **修复鉴权头回归（严重）**：v2.0.4 的 `applyAnthropicAuth` 会无条件删除上游请求的 `Authorization: Bearer` 头、仅保留 `X-Api-Key`，导致默认上游 `opencode.ai/zen/go`（依赖 Bearer 认证）返回 401，所有 `/v1/models`、`/v1/messages`、`/v1/messages/count_tokens`、`/v1/chat/completions` 请求均受影响
+            - **新增配置驱动的鉴权方式**：`Profile` 增加 `auth_mode` 字段（`bearer`（默认）/ `x-api-key` / `both`），`applyAnthropicAuth` 按配置选择鉴权头策略，彻底解决一刀切问题。默认 `bearer` 保持对 OpenAI 兼容网关向后兼容，老配置零迁移
+            - 参考了 fuergaosi233/claude-code-proxy、Calcium-Ion/new-api、LiteLLM 等业界项目的鉴权头处理方案
             详细信息见 [RELEASE_NOTES.md](https://github.com/${{ github.repository }}/blob/main/RELEASE_NOTES.md)
           files: |
             dist/*
