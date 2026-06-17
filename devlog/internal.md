@@ -228,3 +228,16 @@
   - streamOpenAIAsAnthropic 的 `message_delta` 增加 `input_tokens` 字段，值为流中最后 chunk 的真实 prompt_tokens（或估计值兜底）
   - message_start 的 input_tokens 仍为估算值（流式特点决定无法在首帧发送真实值）
 - **影响范围:** Anthropic 原生流式请求的 input/cache 字段现在可被正确记录；下游客户端能通过 message_delta 拿到真实 input_tokens
+
+## 2026-06-17 17:30: v2.0.5 — 同步上游 + 修复认证回归
+- **文件:**
+  - `internal/proxy/handler.go` — applyAnthropicAuth 重构为 auth_mode 三模式（bearer/x-api-key/both）
+  - `internal/config/config.go` — 新增 AuthMode 常量 + Profile.AuthMode 字段 + EffectiveAuthMode()
+  - `internal/proxy/proxy_test.go` — 新增 TestApplyAnthropicAuthModes 等测试
+  - `frontend/app.js` — APP_VERSION v2.0.5
+  - `internal/version/version.go` — 2.0.5
+  - `wails.json` — 2.0.5
+- **原因:** 用户成为原项目合作者；上游已更新至 v2.0.5；我们之前的 v2.0.4 认证头修复存在回归（无条件删除 Bearer）
+- **根因:** v2.0.4 的 applyAnthropicAuth 无条件删除 Authorization: Bearer 并替换为 X-Api-Key，导致 opencode.ai/zen/go 等 Bearer 认证上游返回 401
+- **决策:** git reset --hard upstream/main 同步到 v2.0.5，保留 .gitignore 等独有文件，重新打包
+- **影响范围:** auth_mode 默认 bearer 保留兼容性；使用 X-Api-Key 上游的用户需在 Profile 中设置 auth_mode: x-api-key
