@@ -253,7 +253,7 @@ func parseSessionEvents(filePath, sessionID string) (*SessionDetailResponse, err
 			}
 			// 提取文本和工具名
 			if len(raw.Message.Content) > 0 {
-				text, tools := extractContent(raw.Message.Content)
+				text, tools := extractContent(raw.Message.Content, raw.Type)
 				evt.Message.Text = text
 				evt.Message.Tools = tools
 			}
@@ -279,10 +279,14 @@ type contentPart struct {
 }
 
 // extractContent 从 raw JSON 中提取文本内容和工具名
-func extractContent(raw json.RawMessage) (text string, tools []string) {
+func extractContent(raw json.RawMessage, eventType string) (text string, tools []string) {
 	// 尝试解析为字符串
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
+		// 用户消息合成提示词过滤
+		if eventType == "user" && isSyntheticPrompt(s) {
+			return "", nil
+		}
 		return s, nil
 	}
 
@@ -307,5 +311,29 @@ func extractContent(raw json.RawMessage) (text string, tools []string) {
 		}
 	}
 	text = strings.Join(texts, "\n")
+		// 用户消息合成提示词过滤
+		if eventType == "user" && isSyntheticPrompt(text) {
+			return "", nil
+		}
 	return
+}
+
+// isSyntheticPrompt 判断是否为 Claude Code 注入的合成提示词
+func isSyntheticPrompt(text string) bool {
+	if text == "" {
+		return true
+	}
+	if strings.HasPrefix(text, "[Request interrupted") {
+		return true
+	}
+	if strings.HasPrefix(text, "Base directory for this skill:") {
+		return true
+	}
+	if strings.Contains(text, "<command-name>") {
+		return true
+	}
+	if strings.Contains(text, "<warning>") {
+		return true
+	}
+	return false
 }

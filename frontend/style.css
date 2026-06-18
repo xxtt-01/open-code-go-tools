@@ -3096,6 +3096,35 @@ html[data-theme="dark"] .td-chart-body canvas { filter:invert(0); }
 .sd-exchange-head:hover {
     background: var(--surface-hover);
 }
+.sd-exchange-bar {
+    height: 3px;
+    background: var(--surface);
+    border-radius: 2px;
+    margin: 0 14px 4px 36px;
+    overflow: hidden;
+}
+.sd-exchange-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.4s ease;
+}
+.sd-sort-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xs);
+    color: var(--text-2);
+    font-size: 11px;
+    font-family: var(--sans);
+    padding: 3px 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+.sd-sort-btn:hover {
+    background: var(--accent-soft);
+    color: var(--accent-text);
+    border-color: var(--accent-glow);
+}
 .sd-chevron {
     font-size: 10px;
     color: var(--text-2);

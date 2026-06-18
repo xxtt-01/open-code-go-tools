@@ -918,9 +918,12 @@
                         <div class="modal-card session-detail-modal" role="dialog" aria-modal="true">
                             <div class="modal-header">
                                 <h3 id="session-detail-title">会话详情</h3>
-                                <button class="modal-close" id="sessionDetailClose" aria-label="Close">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                                </button>
+                                <div style="display:flex;align-items:center;gap:8px;">
+                                    <button class="sd-sort-btn" id="sd-sort-btn" type="button" data-i18n="sd_sort_time">按时间</button>
+                                    <button class="modal-close" id="sessionDetailClose" aria-label="Close">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                    </button>
+                                </div>
                             </div>
                             <div class="modal-body" id="session-detail-body">
                                 <div id="session-detail-loading" style="text-align:center;padding:40px;color:var(--text-2);">加载中...</div>

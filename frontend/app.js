@@ -480,6 +480,8 @@ const i18n = {
         sessions_sort_tokens_asc: "Token 最少",
         sessions_sort_cost_desc: "费用最高",
         sessions_show_content: "内容",
+        sd_sort_time: "按时间",
+        sd_sort_tokens: "按 Token",
         sessions_model_chart: "模型分布",
         title_hub: "多设备同步",
         subtitle_hub: "跨设备 Hub 配置同步与状态监控",
@@ -852,6 +854,8 @@ const i18n = {
         sessions_sort_tokens_asc: "Fewest Tokens",
         sessions_sort_cost_desc: "Highest Cost",
         sessions_show_content: "Content",
+        sd_sort_time: "By Time",
+        sd_sort_tokens: "By Tokens",
         sessions_model_chart: "Model Distribution",
         title_hub: "Multi-Device Sync",
         subtitle_hub: "Cross-device usage statistics aggregation",
@@ -3970,6 +3974,13 @@ function setupSessionsControls() {
         });
     }
 
+    // 详情排序按钮
+    const sortBtn = document.getElementById('sd-sort-btn');
+    if (sortBtn) {
+        sortBtn.dataset.sort = 'time';
+        sortBtn.addEventListener('click', toggleDetailSort);
+    }
+
     // Close session detail modal
     const closeBtn = document.getElementById('sessionDetailClose');
     const overlay = document.getElementById('sessionDetailOverlay');
@@ -4192,6 +4203,7 @@ async function openSessionDetail(sessionId) {
         const resp = await apiFetch('/ocgt/api/sessions?id=' + encodeURIComponent(sessionId));
         if (!resp.ok) throw new Error(await resp.text());
         const data = await resp.json();
+        content._detailData = data; // 缓存供排序重渲染
         renderSessionDetail(data, content);
     } catch (err) {
         content.innerHTML = '<div style="text-align:center;padding:40px;color:var(--red);">加载失败: ' + escHtml(err.message) + '</div>';
@@ -4201,48 +4213,108 @@ async function openSessionDetail(sessionId) {
     }
 }
 
-/** 渲染会话详情 */
+/** 渲染会话详情（支持排序） */
 function renderSessionDetail(data, container) {
     const events = data.events || [];
     const showContent = document.getElementById('sessions-content-toggle')?.checked || false;
 
-    let html = '<div class="session-detail-exchanges">';
-    let currentExchange = null;
-    let hasContent = false;
+    // 1. 构建 exchange 对象数组
+    const exchanges = [];
+    let currentEx = null;
 
     for (const evt of events) {
         if (evt.type === 'user') {
-            if (currentExchange) html += currentExchange;
+            if (currentEx) exchanges.push(currentEx);
             const text = showContent && evt.message?.text ? evt.message.text : '';
-            const preview = text ? '：' + escHtml(text.slice(0, 100)) : '';
-            currentExchange = '<div class="sd-exchange">' +
-                '<div class="sd-exchange-head" onclick="toggleExchange(this)">' +
-                '<span class="sd-chevron">▶</span>' +
-                '<span class="sd-role-badge sd-role-user">你</span>' +
-                (preview ? '<span class="sd-preview">' + preview + '</span>' : '') +
-                '<span class="sd-exchange-time">' + formatEventTime(evt.timestamp) + '</span>' +
-                '</div>' +
-                '<div class="sd-exchange-body" style="display:none;">';
-            hasContent = true;
-        } else if (evt.type === 'assistant' && currentExchange) {
+            currentEx = {
+                time: evt.timestamp || '',
+                tokens: 0,
+                text: text,
+                turns: []
+            };
+        } else if (evt.type === 'assistant') {
+            if (!currentEx) {
+                // 无前导 user 事件，创建占位 exchange
+                currentEx = { time: evt.timestamp || '', tokens: 0, text: '', turns: [] };
+            }
             const usage = evt.message?.usage || {};
             const inTok = usage.input_tokens || 0;
             const outTok = usage.output_tokens || 0;
-            const model = evt.message?.model || '';
-            const tools = showContent && evt.message?.tools?.length ? ' ⊧ ' + evt.message.tools.join(' ') : '';
-            currentExchange += '<div class="sd-turn">' +
-                '<div class="sd-turn-header">' +
-                '<span class="sd-role-badge sd-role-ai">AI</span>' +
-                '<span class="sd-turn-model">' + escHtml(model) + '</span>' +
-                '</div>' +
-                '<div class="sd-turn-tokens">↘ ' + inTok + ' · ↗ ' + outTok + (tools ? ' · ' + tools : '') + '</div>' +
-                '</div>';
+            currentEx.turns.push({
+                time: evt.timestamp || '',
+                model: evt.message?.model || '',
+                inTok, outTok,
+                tools: showContent && evt.message?.tools ? evt.message.tools : []
+            });
+            currentEx.tokens += inTok + outTok;
         }
     }
-    if (currentExchange) html += currentExchange;
+    if (currentEx) exchanges.push(currentEx);
+
+    // 2. 排序
+    const sortBtn = document.getElementById('sd-sort-btn');
+    const sortBy = sortBtn?.dataset?.sort || 'time';
+    if (sortBy === 'tokens') {
+        exchanges.sort((a, b) => (b.tokens || 0) - (a.tokens || 0) || a.time.localeCompare(b.time));
+    } else {
+        exchanges.sort((a, b) => b.time.localeCompare(a.time) || (b.tokens || 0) - (a.tokens || 0));
+    }
+
+    // 3. 渲染
+    if (exchanges.length === 0) {
+        container.innerHTML = '<div class="sd-empty">无事件数据</div>';
+        return;
+    }
+
+    const maxTokens = exchanges.reduce((m, e) => Math.max(m, e.tokens || 0), 1);
+    let html = '<div class="session-detail-exchanges">';
+    for (const ex of exchanges) {
+        const preview = ex.text ? '：' + escHtml(ex.text.slice(0, 100)) : '';
+        const toolNames = [...new Set(ex.turns.flatMap(t => t.tools))];
+        const toolStr = toolNames.length ? ' · ⊧ ' + toolNames.join(' ') : '';
+        const pct = ((ex.tokens || 0) / maxTokens * 100).toFixed(1);
+
+        html += '<div class="sd-exchange">' +
+            '<div class="sd-exchange-head" onclick="toggleExchange(this)">' +
+            '<span class="sd-chevron">▶</span>' +
+            '<span class="sd-role-badge sd-role-user">你</span>' +
+            (preview ? '<span class="sd-preview">' + preview + '</span>' : '') +
+            '<span class="sd-exchange-time">' + formatEventTime(ex.time) + '</span>' +
+            '</div>' +
+            '<div class="sd-exchange-bar"><div class="sd-exchange-bar-fill" style="width:' + pct + '%;background:var(--accent);"></div></div>' +
+            '<div class="sd-exchange-body" style="display:none;">';
+
+        for (const turn of ex.turns) {
+            const tokStr = '↘ ' + turn.inTok + ' · ↗ ' + turn.outTok;
+            const tToolStr = turn.tools.length ? ' · ⊧ ' + turn.tools.join(' ') : '';
+            html += '<div class="sd-turn">' +
+                '<div class="sd-turn-header">' +
+                '<span class="sd-role-badge sd-role-ai">AI</span>' +
+                '<span class="sd-turn-model">' + escHtml(turn.model) + '</span>' +
+                '</div>' +
+                '<div class="sd-turn-tokens">' + tokStr + tToolStr + '</div>' +
+                '</div>';
+        }
+
+        html += '</div></div>';
+    }
     html += '</div>';
 
-    container.innerHTML = hasContent ? html : '<div class="sd-empty">无事件数据</div>';
+    container.innerHTML = html;
+}
+
+/** 切换会话详情排序 */
+function toggleDetailSort() {
+    const btn = document.getElementById('sd-sort-btn');
+    if (!btn) return;
+    const current = btn.dataset.sort || 'time';
+    const newSort = current === 'time' ? 'tokens' : 'time';
+    btn.dataset.sort = newSort;
+    btn.textContent = newSort === 'time' ? (t('sd_sort_time') || '按时间') : (t('sd_sort_tokens') || '按 Token');
+    // 重新渲染
+    const content = document.getElementById('session-detail-content');
+    const data = content?._detailData;
+    if (data) renderSessionDetail(data, content);
 }
 
 function toggleExchange(head) {
