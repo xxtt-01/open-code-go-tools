@@ -859,59 +859,54 @@
 
                 <!-- ========== Sessions ========== -->
                 <section class="view" id="view-sessions">
-                    <!-- 统计卡片 -->
-                    <div class="dashboard-grid" id="sessions-stats">
-                        <div class="stat-card">
-                            <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
-                            <div class="stat-info">
-                                <span class="stat-label" data-i18n="sessions_total">本地会话</span>
-                                <h3 class="stat-value" id="sessions-count">-</h3>
-                            </div>
+                    <!-- 时间段切换 + 汇总 -->
+                    <div class="s-period-bar">
+                        <div class="s-period-tabs">
+                            <button class="s-period-btn active" data-period="today" data-i18n="sessions_period_today">今日</button>
+                            <button class="s-period-btn" data-period="month" data-i18n="sessions_period_month">本月</button>
+                            <button class="s-period-btn" data-period="all" data-i18n="sessions_period_all">全部</button>
                         </div>
-                        <div class="stat-card">
-                            <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
-                            <div class="stat-info">
-                                <span class="stat-label" data-i18n="sessions_total_tokens">会话 Token 总计</span>
-                                <h3 class="stat-value mono" id="sessions-total-tokens">-</h3>
-                            </div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/></svg></div>
-                            <div class="stat-info">
-                                <span class="stat-label" data-i18n="sessions_total_cost">会话费用估算</span>
-                                <h3 class="stat-value mono" id="sessions-total-cost">-</h3>
-                            </div>
+                        <div class="s-summary" id="s-summary">
+                            <span><strong class="s-summary-num" id="sessions-count">0</strong> 个会话</span>
+                            <span class="s-summary-sep">·</span>
+                            <span><strong class="s-summary-num" id="sessions-total-tokens">0</strong> tokens</span>
+                            <span class="s-summary-sep">·</span>
+                            <span>≈ $<strong class="s-summary-num" id="sessions-total-cost">0.00</strong></span>
                         </div>
                     </div>
 
-                    <!-- 控制栏：搜索 + 筛选 + 排序 -->
-                    <div class="sessions-control-bar">
-                        <div class="sessions-search-wrap">
-                            <svg class="sessions-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                            <input type="text" id="sessions-search" class="sessions-search-input" placeholder="搜索会话 ID 或模型名称...">
+                    <!-- 搜索 + 筛选 + 排序（紧凑） -->
+                    <div class="s-control-bar">
+                        <div class="s-search-wrap">
+                            <svg class="s-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                            <input type="text" id="sessions-search" class="s-search-input" placeholder="搜索会话 ID 或模型...">
                         </div>
-                        <select id="sessions-model-filter" class="sessions-filter-select">
+                        <select id="sessions-model-filter" class="s-select">
                             <option value="" data-i18n="sessions_filter_all">全部模型</option>
                         </select>
-                        <select id="sessions-sort" class="sessions-filter-select">
-                            <option value="time-desc" data-i18n="sessions_sort_time_desc">最新在前</option>
-                            <option value="time-asc" data-i18n="sessions_sort_time_asc">最早在前</option>
+                        <select id="sessions-sort" class="s-select">
+                            <option value="time-desc" data-i18n="sessions_sort_time_desc">最新</option>
+                            <option value="time-asc" data-i18n="sessions_sort_time_asc">最早</option>
                             <option value="tokens-desc" data-i18n="sessions_sort_tokens_desc">Token 最多</option>
                             <option value="tokens-asc" data-i18n="sessions_sort_tokens_asc">Token 最少</option>
                             <option value="cost-desc" data-i18n="sessions_sort_cost_desc">费用最高</option>
                         </select>
                     </div>
 
-                    <!-- 模型分布图 -->
-                    <div class="card sessions-chart-card" id="sessions-chart-container" style="display:none;">
-                        <div class="hub-section-header">
-                            <h3 data-i18n="sessions_model_chart">模型分布</h3>
+                    <!-- 模型分布图（折叠） -->
+                    <div class="s-chart-collapse" id="sessions-chart-container" style="display:none;">
+                        <div class="s-chart-header" id="s-chart-toggle">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="s-chart-chevron"><polyline points="9 18 15 12 9 6"/></svg>
+                            <span data-i18n="sessions_model_chart">模型分布</span>
+                            <span class="s-chart-count" id="s-chart-model-count"></span>
                         </div>
-                        <canvas id="sessions-model-chart" height="120"></canvas>
+                        <div class="s-chart-body" id="s-chart-body">
+                            <canvas id="sessions-model-chart" height="140"></canvas>
+                        </div>
                     </div>
 
-                    <!-- 会话列表 -->
-                    <div id="sessions-list"></div>
+                    <!-- 会话列表（紧凑行） -->
+                    <div id="sessions-list" class="s-list"></div>
 
                     <!-- 会话详情弹窗 -->
                     <div class="modal-overlay" id="sessionDetailOverlay" aria-hidden="true">

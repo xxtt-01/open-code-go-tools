@@ -471,6 +471,9 @@ const i18n = {
         sessions_no_data: "未找到 Claude Code 会话记录",
         sessions_search_placeholder: "搜索会话 ID 或模型名称...",
         sessions_filter_all: "全部模型",
+        sessions_period_today: "今日",
+        sessions_period_month: "本月",
+        sessions_period_all: "全部",
         sessions_sort_time_desc: "最新在前",
         sessions_sort_time_asc: "最早在前",
         sessions_sort_tokens_desc: "Token 最多",
@@ -839,6 +842,9 @@ const i18n = {
         sessions_no_data: "No Claude Code session data found",
         sessions_search_placeholder: "Search session ID or model...",
         sessions_filter_all: "All Models",
+        sessions_period_today: "Today",
+        sessions_period_month: "Month",
+        sessions_period_all: "All",
         sessions_sort_time_desc: "Newest First",
         sessions_sort_time_asc: "Oldest First",
         sessions_sort_tokens_desc: "Most Tokens",
@@ -3852,12 +3858,13 @@ function formatTokens(n) {
 // ── Sessions ──
 
 let allSessionsData = [];
+let sCurrentPeriod = 'today';
 
 async function refreshSessions() {
     const listEl = document.getElementById('sessions-list');
     if (!listEl) return;
     try {
-        listEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-2);font-size:0.9rem;">加载中...</div>';
+        listEl.innerHTML = '<div class="s-loading">加载中...</div>';
         const resp = await apiFetch('/ocgt/api/sessions');
         if (!resp.ok) throw new Error(await resp.text());
         const data = await resp.json();
@@ -3867,7 +3874,7 @@ async function refreshSessions() {
         renderSessionsChart();
     } catch (err) {
         console.error('Failed to load sessions:', err);
-        if (listEl) listEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--red);">加载失败: ' + escHtml(err.message) + '</div>';
+        if (listEl) listEl.innerHTML = '<div class="s-loading" style="color:var(--red);">加载失败: ' + escHtml(err.message) + '</div>';
     }
 }
 
@@ -3889,6 +3896,32 @@ function populateModelFilter() {
     sel.value = current;
 }
 
+/** 按时段过滤 */
+function filterByPeriod(sessions, period) {
+    if (period === 'all') return sessions;
+    const now = new Date();
+    let cutoff;
+    if (period === 'today') {
+        cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    } else { // month
+        cutoff = new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+    const cutoffMs = cutoff.getTime();
+    return sessions.filter(s => {
+        const t = s.lastTime ? new Date(s.lastTime).getTime() : 0;
+        return t >= cutoffMs;
+    });
+}
+
+/** 简化会话 ID —— 去掉常见前缀 */
+function shortSessionId(id) {
+    if (!id) return '';
+    // 去掉 rollout-YYYY-MM-DDTHH-MM-SS- 或类似前缀
+    const cleaned = id.replace(/^rollout-\d{4}-\d{2}-\d{2}T\d{2}[\-:]\d{2}[\-:]\d{2}-/i, '');
+    if (cleaned.length <= 14) return cleaned;
+    return cleaned.slice(0, 14) + '…';
+}
+
 let sessionsFilterTimer;
 function setupSessionsControls() {
     const searchInput = document.getElementById('sessions-search');
@@ -3900,6 +3933,30 @@ function setupSessionsControls() {
     });
     if (modelFilter) modelFilter.addEventListener('change', applySessionsFilters);
     if (sortSelect) sortSelect.addEventListener('change', applySessionsFilters);
+
+    // 时段切换
+    document.querySelectorAll('.s-period-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.s-period-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            sCurrentPeriod = btn.dataset.period;
+            applySessionsFilters();
+        });
+    });
+
+    // 模型分布图折叠
+    const chartToggle = document.getElementById('s-chart-toggle');
+    if (chartToggle) {
+        chartToggle.addEventListener('click', () => {
+            const body = document.getElementById('s-chart-body');
+            const chevron = chartToggle.querySelector('.s-chart-chevron');
+            if (body && chevron) {
+                const hidden = body.style.display === 'none';
+                body.style.display = hidden ? '' : 'none';
+                chevron.style.transform = hidden ? 'rotate(0deg)' : 'rotate(-90deg)';
+            }
+        });
+    }
 
     // Close session detail modal
     const closeBtn = document.getElementById('sessionDetailClose');
@@ -3917,15 +3974,23 @@ function applySessionsFilters() {
     const modelFilter = document.getElementById('sessions-model-filter')?.value || '';
     const sortVal = document.getElementById('sessions-sort')?.value || 'time-desc';
 
-    let filtered = allSessionsData.filter(s => {
-        if (searchVal && !s.sessionId.toLowerCase().includes(searchVal) && !(s.model || '').toLowerCase().includes(searchVal)) {
-            return false;
-        }
-        if (modelFilter && s.model !== modelFilter) return false;
-        return true;
-    });
+    // 1. 时段过滤
+    let filtered = filterByPeriod(allSessionsData, sCurrentPeriod);
 
-    // 排序
+    // 2. 搜索过滤
+    if (searchVal) {
+        filtered = filtered.filter(s =>
+            s.sessionId.toLowerCase().includes(searchVal) ||
+            (s.model || '').toLowerCase().includes(searchVal)
+        );
+    }
+
+    // 3. 模型过滤
+    if (modelFilter) {
+        filtered = filtered.filter(s => s.model === modelFilter);
+    }
+
+    // 4. 排序
     filtered.sort((a, b) => {
         switch (sortVal) {
             case 'time-asc': return (a.startTime || '').localeCompare(b.startTime || '');
@@ -3941,18 +4006,17 @@ function applySessionsFilters() {
 }
 
 function renderSessionsStats(sessions) {
-    let totalTokens = 0, totalCost = 0, totalMsgs = 0;
+    let totalTokens = 0, totalCost = 0;
     for (const s of sessions) {
         totalTokens += s.totalTokens || 0;
-        totalMsgs += s.messageCount || 0;
         totalCost += sessionCost(s.model, s.inputTokens, s.outputTokens, s.cacheReadTokens, s.cacheCreateTokens);
     }
     const countEl = document.getElementById('sessions-count');
     const totalTokEl = document.getElementById('sessions-total-tokens');
     const totalCostEl = document.getElementById('sessions-total-cost');
-    if (countEl) countEl.textContent = sessions.length + ' 个';
+    if (countEl) countEl.textContent = sessions.length;
     if (totalTokEl) totalTokEl.textContent = formatTokens(totalTokens);
-    if (totalCostEl) totalCostEl.textContent = '$' + totalCost.toFixed(2);
+    if (totalCostEl) totalCostEl.textContent = totalCost.toFixed(2);
 }
 
 function renderSessionsList(sessions) {
@@ -3960,79 +4024,81 @@ function renderSessionsList(sessions) {
     if (!listEl) return;
 
     if (sessions.length === 0) {
-        listEl.innerHTML = '<div class="sessions-empty">' +
-            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="sessions-empty-icon"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' +
-            '<div>' + (t('sessions_no_data') || '未找到 Claude Code 会话记录') + '</div>' +
-            '<div class="sessions-empty-hint">使用 Claude Code 后会自动产生会话记录</div>' +
+        listEl.innerHTML = '<div class="s-empty">' +
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="s-empty-icon"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' +
+            '<div>' + (t('sessions_no_data') || '暂无会话记录') + '</div>' +
             '</div>';
         return;
     }
 
     const maxTokens = sessions.reduce((m, s) => Math.max(m, s.totalTokens || 0), 1);
 
-    listEl.innerHTML = '<div class="sessions-list">' +
-        sessions.map(s => {
-            const shortId = s.sessionId.length > 12 ? s.sessionId.slice(0, 12) + '…' : s.sessionId;
-            const from = s.startTime ? s.startTime.slice(0, 16).replace('T', ' ') : '?';
-            const to = s.lastTime ? s.lastTime.slice(0, 16).replace('T', ' ') : '?';
+    listEl.innerHTML = sessions.map(s => {
+        const ratio = (s.totalTokens || 0) / maxTokens;
+        const dotColor = ratio > 0.5 ? 'var(--red)' : ratio > 0.15 ? 'var(--yellow)' : 'var(--green)';
+        const cost = sessionCost(s.model, s.inputTokens, s.outputTokens, s.cacheReadTokens, s.cacheCreateTokens);
+        const modelShort = (s.model || '?').replace(/^claude-/i, '');
+        const sidShort = shortSessionId(s.sessionId);
 
-            let durStr = '';
-            if (s.startTime && s.lastTime) {
-                const t1 = new Date(s.startTime).getTime();
-                const t2 = new Date(s.lastTime).getTime();
-                if (t1 && t2 && t2 > t1) {
-                    const min = Math.round((t2 - t1) / 60000);
-                    durStr = min >= 60 ? (Math.floor(min / 60) + 'h ' + (min % 60) + 'm') : min + 'm';
-                }
-            }
+        // 时间显示
+        const timeStr = s.lastTime ? formatSessionTime(s.lastTime) : '';
+        const msgLabel = s.messageCount + ' 条';
 
-            const ratio = (s.totalTokens || 0) / maxTokens;
-            const dotColor = ratio > 0.5 ? 'var(--red)' : ratio > 0.15 ? 'var(--yellow)' : 'var(--green)';
-            const cost = sessionCost(s.model, s.inputTokens, s.outputTokens, s.cacheReadTokens, s.cacheCreateTokens);
-            const modelShort = (s.model || '?').replace(/^claude-/i, '');
+        return '<div class="s-row" data-session-id="' + escHtml(s.sessionId) + '">' +
+            '<div class="s-row-main">' +
+            '<div class="s-row-left">' +
+            '<span class="s-row-dot" style="background:' + dotColor + ';"></span>' +
+            '<div class="s-row-info">' +
+            '<span class="s-row-title">' + escHtml(modelShort) + '</span>' +
+            '<span class="s-row-meta">' + timeStr + ' · ' + msgLabel + ' · ' + escHtml(sidShort) + '</span>' +
+            '</div>' +
+            '</div>' +
+            '<div class="s-row-right">' +
+            '<span class="s-row-value">' + formatTokens(s.totalTokens) + '</span>' +
+            '<span class="s-row-cost">$' + cost.toFixed(2) + '</span>' +
+            '<span class="s-row-chevron">›</span>' +
+            '</div>' +
+            '</div>' +
+            '<div class="s-row-bar">' +
+            '<div class="s-row-bar-fill" style="width:' + (ratio * 100).toFixed(1) + '%;background:' + dotColor + ';"></div>' +
+            '</div>' +
+            '</div>';
+    }).join('');
 
-            return '<div class="session-card" data-session-id="' + escHtml(s.sessionId) + '">' +
-                '<span class="session-dot" style="background:' + dotColor + ';"></span>' +
-                '<div class="session-card-body">' +
-                '<div class="session-card-top">' +
-                '<span class="session-id" title="' + escHtml(s.sessionId) + '">' + escHtml(shortId) + '</span>' +
-                '<span class="session-model-badge">' + escHtml(modelShort) + '</span>' +
-                (durStr ? '<span class="session-duration"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="session-icon"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>' + durStr + '</span>' : '') +
-                '</div>' +
-                '<div class="session-card-meta">' +
-                '<span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="session-icon"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' + s.messageCount + ' 条</span>' +
-                '<span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="session-icon"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>' + formatTokens(s.totalTokens) + '</span>' +
-                '<span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="session-icon"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/></svg>$' + cost.toFixed(2) + '</span>' +
-                '</div>' +
-                '</div>' +
-                '<div class="session-card-time">' +
-                '<span>' + from + '</span>' +
-                '<span>' + to + '</span>' +
-                '</div>' +
-                '<button class="session-detail-btn" title="查看详情" data-sid="' + escHtml(s.sessionId) + '">' +
-                '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><polyline points="9 18 15 12 9 6"/></svg>' +
-                '</button>' +
-                '</div>';
-        }).join('') + '</div>';
-
-    // 绑定详情按钮事件
-    listEl.querySelectorAll('.session-detail-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            openSessionDetail(btn.dataset.sid);
+    // 点击行 → 详情
+    listEl.querySelectorAll('.s-row').forEach(row => {
+        row.addEventListener('click', () => {
+            const sid = row.dataset.sessionId;
+            if (sid) openSessionDetail(sid);
         });
     });
+}
+
+function formatSessionTime(iso) {
+    if (!iso) return '';
+    try {
+        const d = new Date(iso);
+        const now = new Date();
+        const isToday = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+        if (isToday) {
+            return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+        return (d.getMonth()+1) + '/' + d.getDate() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch (_) { return iso; }
 }
 
 function renderSessionsChart() {
     const canvas = document.getElementById('sessions-model-chart');
     if (!canvas) return;
     const container = document.getElementById('sessions-chart-container');
+    const countLabel = document.getElementById('s-chart-model-count');
     if (typeof Chart === 'undefined') {
         container.style.display = 'none';
         return;
     }
 
+    // 只对当前过滤后的会话做统计 —— 但图表显示全部数据
+    // 使用 allSessionsData（原始数据）
     const modelCounts = {};
     let totalSessions = 0;
     for (const s of allSessionsData) {
@@ -4046,6 +4112,7 @@ function renderSessionsChart() {
         return;
     }
     container.style.display = 'block';
+    if (countLabel) countLabel.textContent = labels.length + ' 模型';
 
     if (window.__sessionsChart) window.__sessionsChart.destroy();
 
@@ -4066,19 +4133,16 @@ function renderSessionsChart() {
             plugins: {
                 legend: {
                     position: 'right',
-                    labels: { color: '#94a3b8', font: { size: 11 }, padding: 12, boxWidth: 12 }
+                    labels: { color: '#94a3b8', font: { size: 10 }, padding: 10, boxWidth: 10 }
                 }
             },
-            cutout: '55%'
+            cutout: '60%'
         }
     });
 }
 
-/** 费用估算（含模型匹配 + 缓存费用估算） */
+/** 费用估算 */
 function sessionCost(model, inputTokens, outputTokens, cacheReadTokens, cacheCreateTokens) {
-    // 费率表：每 token 价格（USD）
-    // cacheRead 统一按 input 的 10% 估算，cacheCreate 按 input 的 125% 估算（Claude API 标准）
-    // 其他模型暂不支持缓存计费，设为 0
     const rates = {
         'deepseek-v4-flash': { in: 0.3e-6, out: 1.1e-6, cr: 0, cc: 0 },
         'deepseek-v4-pro':   { in: 1.2e-6, out: 4e-6,   cr: 0, cc: 0 },
@@ -4134,9 +4198,7 @@ function renderSessionDetail(data, container) {
 
     for (const evt of events) {
         if (evt.type === 'user') {
-            if (currentExchange) {
-                html += currentExchange;
-            }
+            if (currentExchange) html += currentExchange;
             currentExchange = '<div class="sd-exchange">' +
                 '<div class="sd-exchange-head" onclick="toggleExchange(this)">' +
                 '<span class="sd-chevron">▶</span>' +
@@ -4155,19 +4217,14 @@ function renderSessionDetail(data, container) {
                 '<span class="sd-role-badge sd-role-ai">AI</span>' +
                 '<span class="sd-turn-model">' + escHtml(model) + '</span>' +
                 '</div>' +
-                '<div class="sd-turn-tokens">' +
-                '↘ 输入 ' + inTok + ' · ↗ 输出 ' + outTok +
-                '</div>' +
+                '<div class="sd-turn-tokens">↘ ' + inTok + ' · ↗ ' + outTok + '</div>' +
                 '</div>';
         }
     }
     if (currentExchange) html += currentExchange;
     html += '</div>';
 
-    if (!hasContent) {
-        html = '<div class="sd-empty">无事件数据</div>';
-    }
-    container.innerHTML = html;
+    container.innerHTML = hasContent ? html : '<div class="sd-empty">无事件数据</div>';
 }
 
 function toggleExchange(head) {
@@ -4183,7 +4240,10 @@ function toggleExchange(head) {
                 exchanges.querySelectorAll('.sd-exchange-body').forEach(b => {
                     if (b !== body) {
                         b.style.display = 'none';
-                        b.parentElement.querySelector('.sd-chevron').textContent = '▶';
+                        if (b.parentElement) {
+                            const ch = b.parentElement.querySelector('.sd-chevron');
+                            if (ch) ch.textContent = '▶';
+                        }
                     }
                 });
             }

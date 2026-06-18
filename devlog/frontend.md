@@ -28,7 +28,19 @@
 - **原因:** cdn.jsdelivr.net 在国内不可靠，导致所有 Chart.js 图表不显示；会话图表因缺少保护检查直接抛"Chart is not defined"
 - **影响范围:** 流量雷达图表、Hub 模型分布图、会话模型分布图全部恢复
 
-## 2026-06-02 11:20: 新增 OpenCode Go 套餐额度监控 — 前端
+## 2026-06-18 23:00: 会话视图全面重设计 — 紧凑行 + 时段筛选 + 进度条
+- **文件:**
+  - `frontend/index.html` — 会话视图 HTML 替换为时段栏、紧凑控制栏、可折叠分布图、紧凑行列表
+  - `frontend/app.js` — 全面重写 sessions JS：filterByPeriod 时段过滤、shortSessionId 简化 ID、紧凑行渲染、进度条、图表折叠、i18n 词条
+  - `frontend/style.css` — 旧 session 样式全部替换为 s-period-bar/s-row/s-row-bar 等新样式体系
+- **原因:** 旧卡片布局浪费空间、缺乏时段筛选、无进度条指示相对大小
+- **决策:**
+  - 仿 Token Monitor 的紧凑行布局（图标+标题+meta 一行，value+cost+chevron 右对齐，底部进度条）
+  - 新增「今日/本月/全部」时段选项卡，前端侧 client-side 过滤
+  - 模型分布图改为可折叠面板，默认折叠不占空间
+  - 搜索/筛选/排序栏高度从 34px 压缩到 30px
+
+## 2026-06-18 23:00: 流量雷达 UI 打磨 — 主题色统一
 
 ## 2026-06-02 12:10: 版本号更新 — frontend
 - **文件:** `frontend/app.js` — APP_VERSION: v2.0.1 → v2.0.2
