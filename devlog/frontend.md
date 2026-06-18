@@ -208,6 +208,15 @@
 - **文件:** `frontend/app.js` — APP_VERSION 更新
 - **原因:** 后端版本号升级后前端同步更新显示版本号
 
-## 2026-06-17 17:30: 版本号同步更新 v2.0.3 → v2.0.5
-- **文件:** `frontend/app.js` — APP_VERSION 更新
-- **原因:** 同步上游 v2.0.5 后前端版本号对应更新
+## 2026-06-18 17:00: Hub 跨设备同步前端 UI 实现
+- **文件:**
+  - `frontend/index.html` — 新增 hub 导航按钮、hub 视图面板（3 张统计卡片 + 设备列表 + 模型用量图表）、设置面板中 hub 配置区
+  - `frontend/app.js` — VIEW_VALUES 注册 'hub'、14 条中英文 i18n 词条、视图切换联调、键盘快捷键 Ctrl+6、打开设置时加载 hub 配置、保存 hub 配置按钮事件、hub 逻辑函数（loadHubConfig/refreshHubDashboard/renderHubStats/renderHubModelChart/formatTokens）
+- **原因:** 实现多设备同步功能的前端界面，包括 Hub 服务器配置、设备状态仪表盘、模型用量图表
+- **决策:**
+  - hub 视图复用现有 view/nav-item 体系，Ctrl+6 作为快捷键
+  - Hub 配置放在设置面板（日志区与危险区之间），与 pref_hub/pref_hub_desc 显示在同一区域
+  - 设备列表用同步绿点（sync-dot）表示在线/离线状态
+  - 模型用量用 Chart.js 环形图（doughnut）展示，配色复用 DOPAMINE 色板
+  - 所有 Wails 调用通过 callWails() 桥接，前端在浏览器模式下优雅降级
+- **影响范围:** 侧边栏新增第 7 个 Tab（多设备同步）；设置面板新增 Hub 配置区；新增 14 条 i18n 词条；后端需提供 GetHubConfig/SaveHubConfig/GetHubStatus 三个 Wails 绑定

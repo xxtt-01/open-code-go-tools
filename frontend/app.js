@@ -4,7 +4,7 @@ const CLOSE_BEHAVIORS = new Set(['prompt', 'minimize', 'exit']);
 const ALLOWED_THINKING_BUDGETS = ['256', '512', '1024', '2048', '-1'];
 const THEME_VALUES = new Set(['light', 'dark', 'system']);
 const LANGUAGE_VALUES = new Set(['zh', 'en']);
-const VIEW_VALUES = new Set(['dashboard', 'settings', 'terminal', 'history', 'traffic-detail']);
+const VIEW_VALUES = new Set(['dashboard', 'settings', 'terminal', 'history', 'traffic-detail', 'hub']);
 const COMPACT_SHELL_VALUES = new Set(['powershell', 'cmd', 'bash']);
 const INTEGRATION_IDS = ['quick', 'cli', 'vscode', 'claude-desktop'];
 
@@ -461,7 +461,21 @@ const i18n = {
         loading_unavailable_desc: "本地代理未响应。请检查监听地址、端口占用或配置后重试。",
         proxy_health_timeout: "代理端口未响应 /healthz",
         btn_retry_connection: "重试连接",
-        token_total_label: "总计: {{count}} tokens"
+        token_total_label: "总计: {{count}} tokens",
+        nav_hub: "多设备同步",
+        title_hub: "多设备同步",
+        subtitle_hub: "跨设备 Hub 配置同步与状态监控",
+        hub_devices: "已连接设备",
+        hub_last_sync: "最近同步",
+        hub_sync_profile: "同步配置",
+        hub_device_list: "设备列表",
+        hub_no_devices: "暂无已连接设备",
+        hub_model_usage: "模型用量分布",
+        pref_hub: "Hub 同步",
+        pref_hub_desc: "跨设备配置同步与 Hub 连接",
+        hub_server_url: "Hub 服务器地址",
+        btn_save_hub: "保存",
+        hub_sync_now: "立即同步"
     },
     en: {
         nav_dashboard: "Status",
@@ -791,7 +805,21 @@ const i18n = {
         loading_unavailable_desc: "The local proxy did not respond. Check the listen address, port usage, or configuration, then retry.",
         proxy_health_timeout: "Proxy port did not respond to /healthz",
         btn_retry_connection: "Retry Connection",
-        token_total_label: "Total: {{count}} tokens"
+        token_total_label: "Total: {{count}} tokens",
+        nav_hub: "Multi-Device",
+        title_hub: "Multi-Device Sync",
+        subtitle_hub: "Cross-device Hub configuration sync and status",
+        hub_devices: "Connected Devices",
+        hub_last_sync: "Last Sync",
+        hub_sync_profile: "Sync Config",
+        hub_device_list: "Device List",
+        hub_no_devices: "No connected devices",
+        hub_model_usage: "Model Usage Distribution",
+        pref_hub: "Hub Sync",
+        pref_hub_desc: "Cross-device configuration sync and Hub connection",
+        hub_server_url: "Hub Server URL",
+        btn_save_hub: "Save",
+        hub_sync_now: "Sync Now"
     }
 };
 
@@ -2218,7 +2246,8 @@ function updateActiveViewHeaders() {
         settings: { title: t('title_settings'), subtitle: t('subtitle_settings') },
         terminal: { title: t('title_terminal'), subtitle: t('subtitle_terminal') },
         history: { title: t('title_history'), subtitle: t('subtitle_history') },
-        'traffic-detail': { title: '流量明细', subtitle: '查看所有请求的详细记录' }
+        'traffic-detail': { title: '流量明细', subtitle: '查看所有请求的详细记录' },
+        hub: { title: t('title_hub'), subtitle: t('subtitle_hub') }
     }[viewId];
     if (meta) {
         titleEl.textContent = meta.title;
@@ -2240,6 +2269,9 @@ function setActiveView(viewId, options = {}) {
     // Init traffic detail on first activation
     if (viewId === 'traffic-detail' && typeof initTrafficDetail === 'function') {
       initTrafficDetail();
+    }
+    if (viewId === 'hub' && typeof refreshHubDashboard === 'function') {
+      refreshHubDashboard();
     }
     if (options.persist !== false) {
         localStorage.setItem('last-view', viewId);
@@ -2282,7 +2314,7 @@ function setupNavigation() {
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
         if (e.ctrlKey || e.metaKey) {
-            const viewMap = { '1': 'dashboard', '2': 'settings', '3': 'terminal', '4': 'history', '5': 'traffic-detail' };
+            const viewMap = { '1': 'dashboard', '2': 'settings', '3': 'terminal', '4': 'history', '5': 'traffic-detail', '6': 'hub' };
             const viewId = viewMap[e.key];
             if (viewId) {
                 e.preventDefault();
@@ -3216,6 +3248,9 @@ function openSettingsPanel() {
 
         syncAccentDots(currentHue);
 
+        // Load Hub config
+        if (typeof loadHubConfig === 'function') loadHubConfig();
+
     }
 
 }
@@ -3326,6 +3361,29 @@ function setupThemeLangHandlers() {
 
     }
 
+    // Hub config save button
+    const saveHubBtn = document.getElementById('save-hub-config-btn');
+    if (saveHubBtn) {
+        saveHubBtn.addEventListener('click', async () => {
+            const url = document.getElementById('hub-server-url').value.trim();
+            try {
+                saveHubBtn.disabled = true;
+                saveHubBtn.textContent = t('status_saving');
+                const res = await callWails('SaveHubConfig', url);
+                if (res === 'success') {
+                    toastI18n('toast_saved', 'success');
+                } else {
+                    toast(t('toast_save_failed') + ': ' + (res || ''), 'error');
+                }
+            } catch (err) {
+                console.error('SaveHubConfig error:', err);
+                toast(t('toast_save_failed') + ': ' + err.message, 'error');
+            } finally {
+                saveHubBtn.disabled = false;
+                saveHubBtn.textContent = t('btn_save_hub');
+            }
+        });
+    }
 }
 
 
@@ -3534,6 +3592,127 @@ function setupEnvRepairHandlers() {
 // ══════════════════════════════════════════════════════
 
 // ══════════════════════════════════════════════════════
+
+// ── Hub cross-device sync ──
+
+/** Load hub config from backend and populate the input field */
+async function loadHubConfig() {
+    const input = document.getElementById('hub-server-url');
+    if (!input) return;
+    try {
+        const config = await callWails('GetHubConfig');
+        if (config && config.server_url) {
+            input.value = config.server_url;
+        }
+    } catch (err) {
+        console.error('Failed to load hub config:', err);
+    }
+}
+
+/** Fetch hub status and refresh entire dashboard */
+async function refreshHubDashboard() {
+    try {
+        const data = await callWails('GetHubStatus');
+        if (!data) {
+            document.getElementById('hub-device-count').textContent = '-';
+            document.getElementById('hub-last-sync').textContent = '-';
+            document.getElementById('hub-sync-status').textContent = t('status_not_configured');
+            document.getElementById('hub-device-list').innerHTML = '<span>' + t('hub_no_devices') + '</span>';
+            return;
+        }
+        renderHubStats(data);
+        renderHubModelChart(data);
+    } catch (err) {
+        console.error('Failed to refresh hub dashboard:', err);
+    }
+}
+
+/** Render hub stat cards and device list */
+function renderHubStats(data) {
+    const deviceCount = data.devices ? data.devices.length : 0;
+    document.getElementById('hub-device-count').textContent = deviceCount;
+    document.getElementById('hub-last-sync').textContent = data.last_sync_at || '-';
+    document.getElementById('hub-sync-status').textContent = data.sync_enabled ? t('sync_active') : t('status_not_configured');
+
+    const listEl = document.getElementById('hub-device-list');
+    if (data.devices && data.devices.length > 0) {
+        listEl.innerHTML = '<div style="display:flex;flex-direction:column;gap:8px;">' +
+            data.devices.map(d => '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);">' +
+                '<span class="sync-dot' + (d.online ? '' : ' inactive') + '"></span>' +
+                '<span style="font-weight:600;color:var(--text-0);">' + escHtml(d.name || d.id) + '</span>' +
+                '<span style="margin-left:auto;font-size:12px;color:var(--text-2);font-family:var(--mono);">' + escHtml(d.last_seen || '') + '</span>' +
+            '</div>').join('') +
+        '</div>';
+    } else {
+        listEl.innerHTML = '<span>' + t('hub_no_devices') + '</span>';
+    }
+}
+
+/** Render model usage chart using Chart.js */
+function renderHubModelChart(data) {
+    const canvas = document.getElementById('hub-model-chart');
+    if (!canvas) return;
+    const models = data.model_usage || [];
+    if (models.length === 0) {
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+    }
+
+    if (canvas.__chart) {
+        canvas.__chart.destroy();
+    }
+
+    const labels = models.map(m => m.model || m.name || 'unknown');
+    const values = models.map(m => Number(m.tokens) || 0);
+    const colors = ['#FF6B6B', '#4ECDC4', '#FFE66D', '#A8E6CF', '#FF8B94', '#95E1D3', '#F38181', '#AA96DA'];
+
+    canvas.__chart = new Chart(canvas.getContext('2d'), {
+        type: 'doughnut',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: values,
+                backgroundColor: colors.slice(0, labels.length),
+                borderWidth: 1,
+                borderColor: 'var(--bg-0)'
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    position: 'right',
+                    labels: {
+                        color: 'var(--text-1)',
+                        font: { size: 12 },
+                        padding: 12
+                    }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                            const pct = total > 0 ? ((context.parsed / total) * 100).toFixed(1) : 0;
+                            return context.label + ': ' + formatTokens(context.parsed) + ' (' + pct + '%)';
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+/** Format token counts with K/M/B suffixes */
+function formatTokens(count) {
+    const n = Number(count);
+    if (!Number.isFinite(n)) return '0';
+    if (n >= 1000000000) return (n / 1000000000).toFixed(2) + 'B';
+    if (n >= 1000000) return (n / 1000000).toFixed(2) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    return n.toFixed(0);
+}
 
 // Quota fetching and rendering
 async function fetchAndRenderQuota() {
