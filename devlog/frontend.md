@@ -220,3 +220,29 @@
   - 模型用量用 Chart.js 环形图（doughnut）展示，配色复用 DOPAMINE 色板
   - 所有 Wails 调用通过 callWails() 桥接，前端在浏览器模式下优雅降级
 - **影响范围:** 侧边栏新增第 7 个 Tab（多设备同步）；设置面板新增 Hub 配置区；新增 14 条 i18n 词条；后端需提供 GetHubConfig/SaveHubConfig/GetHubStatus 三个 Wails 绑定
+
+## 2026-06-18 14:00: 修复 Hub 前端与后端 API 接口不匹配
+- **文件:**
+  - `frontend/index.html` — 重写 Hub 仪表盘布局（汇总统计卡片 + 设备列表 + 模型柱状图）
+  - `frontend/app.js` — 重构 Hub 函数（JSON.parse Wails 返回值、正确传递 5 个配置参数、对齐 remoteStats 结构）
+  - `internal/hub/server.go` — storePath→dataDir 重命名
+  - `main.go` — hub 命令错误处理统一 return err
+- **原因:** 前端子代理独立实现的接口与 Go 后端 Wails 绑定的参数/返回结构不一致
+- **修复清单:**
+  1. SaveHubConfig 调用补齐 5 个参数（enabled, hubURL, secret, deviceName, interval）
+  2. GetHubConfig/GetHubStatus 返回值需要 JSON.parse
+  3. renderHubStats 从 remoteStats 读数据而非顶层
+  4. Hub 仪表盘改为含汇总统计卡片 + 模型柱状图的完整布局
+  5. 设置面板补齐启用开关/密钥/设备名/推送间隔字段
+  6. i18n 词条同步更新
+  7. main.go hub 命令错误处理由 os.Exit 改为 return err
+- **影响范围:** 前端 Hub 功能现已与后端绑定正确对接
+
+## 2026-06-18 14:00: 修复 Hub 前端与后端 API 接口不匹配
+- **文件:**
+  - `frontend/index.html` — 重写 Hub 仪表盘布局
+  - `frontend/app.js` — 重构 Hub 函数对接后端 API
+  - `internal/hub/server.go` — storePath→dataDir 重命名
+  - `main.go` — hub 命令错误处理改为 return err
+- **原因:** 前端子代理实现的接口与 Go 后端 Wails 绑定的参数/返回结构不一致
+- **影响范围:** Hub 前端现与后端正确对接

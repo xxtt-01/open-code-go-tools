@@ -309,3 +309,8 @@
   - main.go: cmdHub 使用 signal.NotifyContext 实现优雅关闭
   - hub case 使用 os.Exit(1) 错误处理 + return nil 正常退出
 - **影响范围:** GUI 启动时自动初始化 Hub 计数器；配置 Hub 后自动推送/接收同步数据；CLI 可独立运行 Hub 服务器
+
+## 2026-06-18 14:00: server.go storePath 重命名为 dataDir
+- **文件:** `internal/hub/server.go`
+- **原因:** storePath 字面含义是文件路径，实际存储的是目录，命名误导
+- **影响范围:** 仅字段重命名，无功能变化
