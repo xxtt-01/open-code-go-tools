@@ -17,11 +17,9 @@
   - 全面用 SVG 图标替代 emoji，用 CSS 类替代内联样式
 - **影响范围:** frontend/ 下三个文件
 
-  **2026-06-18 后续修复：** sessionCost 补充 glm/hy/mimo/minimax 费率和缓存费用计算，修正缺失模型误按 Sonnet 计价和忽略缓存费用的问题
-  - `frontend/src/wailsjs/go/main/App.d.ts` — TypeScript 类型
-  - `frontend/src/wailsjs/go/main/App.js` — JS 绑定
-- **原因:** 参考 `@yinxe/opencode-tui-usage`，在 ocgt GUI 显示 Rolling/Weekly/Monthly 额度
-- **决策:** 前端通过 Wails `FetchQuota()` 方法调用后端 API
+  **2026-06-18 后续修复：** sessionCost 补全模型费率 + 缓存费用计算；删除残留的 test-hub-connection-btn 死代码；hy 匹配键改为 hy3 避免误匹配
+
+## 2026-06-02 11:20: 新增 OpenCode Go 套餐额度监控 — 前端
 
 ## 2026-06-02 12:10: 版本号更新 — frontend
 - **文件:** `frontend/app.js` — APP_VERSION: v2.0.1 → v2.0.2

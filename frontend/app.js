@@ -4083,7 +4083,7 @@ function sessionCost(model, inputTokens, outputTokens, cacheReadTokens, cacheCre
         'kimi':              { in: 3e-6,   out: 15e-6,  cr: 0, cc: 0 },
         'qwen':              { in: 3e-6,   out: 15e-6,  cr: 0, cc: 0 },
         'glm':               { in: 0.5e-6, out: 1.5e-6, cr: 0, cc: 0 },
-        'hy':                 { in: 0.5e-6, out: 1.5e-6, cr: 0, cc: 0 },
+        'hy3':               { in: 0.5e-6, out: 1.5e-6, cr: 0, cc: 0 },
         'mimo':              { in: 1e-6,   out: 2e-6,   cr: 0, cc: 0 },
         'minimax':           { in: 0.8e-6, out: 2e-6,   cr: 0, cc: 0 },
     };
