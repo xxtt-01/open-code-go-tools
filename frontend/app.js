@@ -4,7 +4,7 @@ const CLOSE_BEHAVIORS = new Set(['prompt', 'minimize', 'exit']);
 const ALLOWED_THINKING_BUDGETS = ['256', '512', '1024', '2048', '-1'];
 const THEME_VALUES = new Set(['light', 'dark', 'system']);
 const LANGUAGE_VALUES = new Set(['zh', 'en']);
-const VIEW_VALUES = new Set(['dashboard', 'settings', 'terminal', 'history', 'traffic-detail', 'hub']);
+const VIEW_VALUES = new Set(['dashboard', 'settings', 'terminal', 'history', 'traffic-detail', 'hub', 'sessions']);
 const COMPACT_SHELL_VALUES = new Set(['powershell', 'cmd', 'bash']);
 const INTEGRATION_IDS = ['quick', 'cli', 'vscode', 'claude-desktop'];
 
@@ -463,6 +463,10 @@ const i18n = {
         btn_retry_connection: "重试连接",
         token_total_label: "总计: {{count}} tokens",
         nav_hub: "多设备同步",
+        nav_sessions: "会话",
+        sessions_total: "本地会话",
+        sessions_loading: "加载中...",
+        sessions_no_data: "未找到 Claude Code 会话记录",
         title_hub: "多设备同步",
         subtitle_hub: "跨设备 Hub 配置同步与状态监控",
         hub_disconnected: "未连接",
@@ -813,6 +817,10 @@ const i18n = {
         btn_retry_connection: "Retry Connection",
         token_total_label: "Total: {{count}} tokens",
         nav_hub: "Multi-Device",
+        nav_sessions: "Sessions",
+        sessions_total: "Local Sessions",
+        sessions_loading: "Loading...",
+        sessions_no_data: "No Claude Code session data found",
         title_hub: "Multi-Device Sync",
         subtitle_hub: "Cross-device usage statistics aggregation",
         hub_disconnected: "Disconnected",
@@ -868,6 +876,7 @@ function escapeHtml(value) {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
 }
+const escHtml = escapeHtml;
 
 function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
@@ -2262,7 +2271,8 @@ function updateActiveViewHeaders() {
         terminal: { title: t('title_terminal'), subtitle: t('subtitle_terminal') },
         history: { title: t('title_history'), subtitle: t('subtitle_history') },
         'traffic-detail': { title: '流量明细', subtitle: '查看所有请求的详细记录' },
-        hub: { title: t('title_hub'), subtitle: t('subtitle_hub') }
+        hub: { title: t('title_hub'), subtitle: t('subtitle_hub') },
+        sessions: { title: t('nav_sessions'), subtitle: 'Claude Code 本地会话记录' }
     }[viewId];
     if (meta) {
         titleEl.textContent = meta.title;
@@ -2287,6 +2297,9 @@ function setActiveView(viewId, options = {}) {
     }
     if (viewId === 'hub' && typeof refreshHubDashboard === 'function') {
       refreshHubDashboard();
+    }
+    if (viewId === 'sessions' && typeof refreshSessions === 'function') {
+      refreshSessions();
     }
     if (options.persist !== false) {
         localStorage.setItem('last-view', viewId);
@@ -2329,7 +2342,7 @@ function setupNavigation() {
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
         if (e.ctrlKey || e.metaKey) {
-            const viewMap = { '1': 'dashboard', '2': 'settings', '3': 'terminal', '4': 'history', '5': 'traffic-detail', '6': 'hub' };
+            const viewMap = { '1': 'dashboard', '2': 'settings', '3': 'terminal', '4': 'history', '5': 'traffic-detail', '6': 'hub', '7': 'sessions' };
             const viewId = viewMap[e.key];
             if (viewId) {
                 e.preventDefault();
@@ -3764,6 +3777,56 @@ function formatTokens(n) {
     if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
     if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
     return String(n);
+}
+
+// ── Sessions ──
+
+async function refreshSessions() {
+    const listEl = document.getElementById('sessions-list');
+    if (!listEl) return;
+    try {
+        listEl.innerHTML = '<span>加载中...</span>';
+        const resp = await apiFetch('/ocgt/api/sessions');
+        if (!resp.ok) throw new Error(await resp.text());
+        const data = await resp.json();
+        renderSessions(data);
+    } catch (err) {
+        console.error('Failed to load sessions:', err);
+        if (listEl) listEl.innerHTML = '<span style="color:var(--red);">加载失败: ' + escHtml(err.message) + '</span>';
+    }
+}
+
+function renderSessions(data) {
+    const sessions = data.sessions || [];
+    const countEl = document.getElementById('sessions-count');
+    const listEl = document.getElementById('sessions-list');
+    if (!listEl) return;
+
+    if (countEl) countEl.textContent = sessions.length + ' 个会话';
+
+    if (sessions.length === 0) {
+        listEl.innerHTML = '<span>' + (t('sessions_no_data') || '未找到 Claude Code 会话记录') + '</span>';
+        return;
+    }
+
+    listEl.innerHTML = '<div style="display:flex;flex-direction:column;gap:8px;">' +
+        sessions.map(s => {
+            const sid = s.sessionId || '';
+            const shortId = sid.length > 8 ? sid.slice(0, 8) + '...' : sid;
+            const from = s.startTime ? s.startTime.slice(0, 19).replace('T', ' ') : '?';
+            const to = s.lastTime ? s.lastTime.slice(0, 19).replace('T', ' ') : '?';
+            const tokens = formatTokens ? formatTokens(s.totalTokens) : s.totalTokens;
+            return '<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);">' +
+                '<div style="flex:1;min-width:0;">' +
+                '<div style="font-weight:600;color:var(--text-0);font-size:0.9rem;font-family:var(--mono);">' + escHtml(shortId) + '</div>' +
+                '<div style="font-size:0.8rem;color:var(--text-2);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escHtml(s.model || '?') + ' · ' + s.messageCount + ' 条消息</div>' +
+                '</div>' +
+                '<div style="text-align:right;flex-shrink:0;">' +
+                '<div style="font-family:var(--mono);color:var(--text-0);font-size:0.9rem;">' + tokens + '</div>' +
+                '<div style="font-size:0.75rem;color:var(--text-2);margin-top:1px;">' + from + ' → ' + to + '</div>' +
+                '</div>' +
+                '</div>';
+        }).join('') + '</div>';
 }
 
 // Quota fetching and rendering

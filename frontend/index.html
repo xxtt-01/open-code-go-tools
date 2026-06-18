@@ -110,6 +110,13 @@
                     <span data-i18n="nav_hub">多设备同步</span>
                     <span class="nav-shortcut">Ctrl+6</span>
                 </button>
+                <button class="nav-item" id="btn-nav-sessions" data-view="sessions" aria-label="Sessions, Ctrl+7">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                    </svg>
+                    <span data-i18n="nav_sessions">会话</span>
+                    <span class="nav-shortcut">Ctrl+7</span>
+                </button>
             </nav>
 
             <div class="sidebar-footer">
@@ -836,6 +843,23 @@
                     <div class="card" style="margin-top: 16px; padding: 20px;">
                         <h3 style="font-size: 14px; font-weight: 700; color: var(--text-0); margin-bottom: 12px;" data-i18n="hub_model_breakdown">模型用量分布（全部设备）</h3>
                         <canvas id="hub-model-chart" height="200"></canvas>
+                    </div>
+                </section>
+
+                <!-- ========== Sessions ========== -->
+                <section class="view" id="view-sessions">
+                    <div class="sessions-header" style="display:flex;gap:16px;margin-bottom:20px;">
+                        <div class="stat-card" style="flex:1;">
+                            <div class="stat-info">
+                                <span class="stat-label" data-i18n="sessions_total">本地会话</span>
+                                <h3 class="stat-value" id="sessions-count">-</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card" style="padding:20px;">
+                        <div id="sessions-list" style="color:var(--text-2);font-size:13px;">
+                            <span data-i18n="sessions_loading">加载中...</span>
+                        </div>
                     </div>
                 </section>
 

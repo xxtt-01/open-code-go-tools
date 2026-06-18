@@ -246,3 +246,15 @@
   - `main.go` — hub 命令错误处理改为 return err
 - **原因:** 前端子代理实现的接口与 Go 后端 Wails 绑定的参数/返回结构不一致
 - **影响范围:** Hub 前端现与后端正确对接
+
+## 2026-06-18 17:30: 会话视图前端实现
+- **文件:**
+  - `frontend/index.html` — 新增会话导航按钮(Ctrl+7)和会话视图面板
+  - `frontend/app.js` — VIEW_VALUES 注册 'sessions'、i18n 词条(4 条中/英)、视图切换联调、快捷键 Ctrl+7、refreshSessions/renderSessions 函数
+- **原因:** 需要在前端展示 Claude Code 本地会话记录，方便用户查看会话历史
+- **决策:**
+  - sessions 视图复用现有 view/nav-item 体系，Ctrl+7 作为快捷键
+  - 通过 apiFetch 调用 `/ocgt/api/sessions` HTTP API 获取数据
+  - 列表卡片展示 sessionId 缩写、模型、消息数、Token 用量、起止时间
+  - 同时修复了 `escHtml` 未定义的潜在 bug（添加 `const escHtml = escapeHtml` 别名）
+- **影响范围:** 侧边栏新增第 8 个 Tab（会话）；后端需提供 `/ocgt/api/sessions` HTTP 端点
