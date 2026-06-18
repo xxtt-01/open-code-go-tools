@@ -469,6 +469,14 @@ const i18n = {
         sessions_total_cost: "会话费用估算",
         sessions_loading: "加载中...",
         sessions_no_data: "未找到 Claude Code 会话记录",
+        sessions_search_placeholder: "搜索会话 ID 或模型名称...",
+        sessions_filter_all: "全部模型",
+        sessions_sort_time_desc: "最新在前",
+        sessions_sort_time_asc: "最早在前",
+        sessions_sort_tokens_desc: "Token 最多",
+        sessions_sort_tokens_asc: "Token 最少",
+        sessions_sort_cost_desc: "费用最高",
+        sessions_model_chart: "模型分布",
         title_hub: "多设备同步",
         subtitle_hub: "跨设备 Hub 配置同步与状态监控",
         hub_disconnected: "未连接",
@@ -480,6 +488,10 @@ const i18n = {
         hub_device_list: "在线设备",
         hub_no_devices: "暂无设备数据",
         hub_model_breakdown: "模型用量分布（全部设备）",
+        hub_refresh: "刷新",
+        hub_sync_now: "立即同步",
+        hub_sync_success: "同步成功",
+        hub_sync_failed: "同步失败",
         pref_hub_title: "跨设备同步",
         pref_hub_desc: "将使用统计同步到 Hub，在多台设备间查看汇总数据",
         pref_hub_enable: "启用同步",
@@ -825,6 +837,14 @@ const i18n = {
         sessions_total_cost: "Session Estimated Cost",
         sessions_loading: "Loading...",
         sessions_no_data: "No Claude Code session data found",
+        sessions_search_placeholder: "Search session ID or model...",
+        sessions_filter_all: "All Models",
+        sessions_sort_time_desc: "Newest First",
+        sessions_sort_time_asc: "Oldest First",
+        sessions_sort_tokens_desc: "Most Tokens",
+        sessions_sort_tokens_asc: "Fewest Tokens",
+        sessions_sort_cost_desc: "Highest Cost",
+        sessions_model_chart: "Model Distribution",
         title_hub: "Multi-Device Sync",
         subtitle_hub: "Cross-device usage statistics aggregation",
         hub_disconnected: "Disconnected",
@@ -836,6 +856,10 @@ const i18n = {
         hub_device_list: "Online Devices",
         hub_no_devices: "No device data",
         hub_model_breakdown: "Model Usage (All Devices)",
+        hub_refresh: "Refresh",
+        hub_sync_now: "Sync Now",
+        hub_sync_success: "Sync successful",
+        hub_sync_failed: "Sync failed",
         pref_hub_title: "Cross-Device Sync",
         pref_hub_desc: "Sync usage stats to Hub for cross-device aggregation",
         pref_hub_enable: "Enable Sync",
@@ -3594,6 +3618,37 @@ function setupEventHandlers() {
             initializeApp();
         });
     }
+
+    // Hub: Sync Now button
+    const syncBtn = document.getElementById('hub-sync-now-btn');
+    if (syncBtn) {
+        syncBtn.addEventListener('click', async () => {
+            const origText = syncBtn.textContent;
+            syncBtn.textContent = t('sessions_loading') || '同步中...';
+            syncBtn.disabled = true;
+            try {
+                const resp = await apiFetch('/ocgt/api/hub/sync', { method: 'POST' }, 10000);
+                if (!resp.ok) throw new Error(await resp.text());
+                toastI18n('hub_sync_success', 'success');
+                setTimeout(() => refreshHubDashboard(), 1500);
+            } catch (err) {
+                console.error('Sync failed:', err);
+                toastI18n('hub_sync_failed', 'error');
+            } finally {
+                syncBtn.textContent = origText;
+                syncBtn.disabled = false;
+            }
+        });
+    }
+
+    // Hub: Refresh button
+    const refreshBtn = document.getElementById('hub-refresh-btn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', () => refreshHubDashboard());
+    }
+
+    // Sessions: search/filter/sort controls
+    setupSessionsControls();
 }
 
 
@@ -3699,26 +3754,36 @@ function renderHubStats(stats) {
 
     // Device list
     const listEl = document.getElementById('hub-devices-list');
+    const countEl = document.getElementById('hub-device-count');
     const devices = stats.devices || [];
+    if (countEl) countEl.textContent = devices.length + ' 台';
+
     if (devices.length === 0) {
-        listEl.innerHTML = '<span>' + (t('hub_no_devices') || '暂无设备数据') + '</span>';
+        listEl.innerHTML = '<span class="hub-empty-hint">' + (t('hub_no_devices') || '暂无设备数据') + '</span>';
     } else {
-        listEl.innerHTML = '<div style="display:flex;flex-direction:column;gap:6px;">' +
-            devices.map(d => {
-                const isStale = d.stale;
-                const dotColor = isStale ? 'var(--text-2)' : 'var(--green)';
-                const statusLabel = isStale ? '离线' : '在线';
-                const name = d.displayName || d.deviceId || 'Unknown';
-                const dToday = d.today || {};
-                const dAllTime = d.allTime || {};
-                return '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);">' +
-                    '<span style="width:8px;height:8px;border-radius:50%;background:' + dotColor + ';flex-shrink:0;"></span>' +
-                    '<span style="flex:1;font-weight:500;color:var(--text-0);">' + escHtml(name) + '</span>' +
-                    '<span style="font-size:0.8rem;color:var(--text-2);">今日 ' + formatTokens(dToday.totalTokens || 0) + '</span>' +
-                    '<span style="font-size:0.8rem;color:var(--text-1);font-family:var(--mono);">总计 ' + formatTokens(dAllTime.totalTokens || 0) + '</span>' +
-                    '<span style="font-size:0.75rem;color:var(--text-2);">(' + statusLabel + ')</span>' +
-                    '</div>';
-            }).join('') + '</div>';
+        listEl.innerHTML = devices.map(d => {
+            const isStale = d.stale;
+            const dotColor = isStale ? 'var(--text-2)' : 'var(--green)';
+            const statusLabel = isStale ? '离线' : '在线';
+            const name = d.displayName || d.deviceId || 'Unknown';
+            const dToday = d.today || {};
+            const dAllTime = d.allTime || {};
+            const todayT = dToday.totalTokens || 0;
+            const allTimeT = dAllTime.totalTokens || 0;
+            const hostname = d.hostname || '';
+            return '<div class="hub-device-item">' +
+                '<span class="hub-device-dot" style="background:' + dotColor + ';"></span>' +
+                '<div class="hub-device-info">' +
+                '<div class="hub-device-name">' + escHtml(name) + '</div>' +
+                (hostname ? '<div class="hub-device-meta">' + escHtml(hostname) + '</div>' : '') +
+                '</div>' +
+                '<div class="hub-device-stats">' +
+                '<span class="hub-device-today">今日 ' + formatTokens(todayT) + '</span>' +
+                '<span class="hub-device-total">总计 ' + formatTokens(allTimeT) + '</span>' +
+                '</div>' +
+                '<span class="hub-device-status" data-status="' + (isStale ? 'offline' : 'online') + '">' + statusLabel + '</span>' +
+                '</div>';
+        }).join('');
     }
 
     // Model chart
@@ -3785,6 +3850,8 @@ function formatTokens(n) {
 
 // ── Sessions ──
 
+let allSessionsData = [];
+
 async function refreshSessions() {
     const listEl = document.getElementById('sessions-list');
     if (!listEl) return;
@@ -3793,11 +3860,213 @@ async function refreshSessions() {
         const resp = await apiFetch('/ocgt/api/sessions');
         if (!resp.ok) throw new Error(await resp.text());
         const data = await resp.json();
-        renderSessions(data);
+        allSessionsData = data.sessions || [];
+        populateModelFilter();
+        applySessionsFilters();
+        renderSessionsChart();
     } catch (err) {
         console.error('Failed to load sessions:', err);
         if (listEl) listEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--red);">加载失败: ' + escHtml(err.message) + '</div>';
     }
+}
+
+function populateModelFilter() {
+    const sel = document.getElementById('sessions-model-filter');
+    if (!sel) return;
+    const models = new Set();
+    for (const s of allSessionsData) {
+        if (s.model) models.add(s.model);
+    }
+    const current = sel.value;
+    sel.innerHTML = '<option value="">' + (t('sessions_filter_all') || '全部模型') + '</option>';
+    [...models].sort().forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = m;
+        sel.appendChild(opt);
+    });
+    sel.value = current;
+}
+
+let sessionsFilterTimer;
+function setupSessionsControls() {
+    const searchInput = document.getElementById('sessions-search');
+    const modelFilter = document.getElementById('sessions-model-filter');
+    const sortSelect = document.getElementById('sessions-sort');
+    if (searchInput) searchInput.addEventListener('input', () => {
+        clearTimeout(sessionsFilterTimer);
+        sessionsFilterTimer = setTimeout(applySessionsFilters, 200);
+    });
+    if (modelFilter) modelFilter.addEventListener('change', applySessionsFilters);
+    if (sortSelect) sortSelect.addEventListener('change', applySessionsFilters);
+
+    // Close session detail modal
+    const closeBtn = document.getElementById('sessionDetailClose');
+    const overlay = document.getElementById('sessionDetailOverlay');
+    if (closeBtn && overlay) {
+        closeBtn.addEventListener('click', () => overlay.classList.remove('active'));
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) overlay.classList.remove('active');
+        });
+    }
+}
+
+function applySessionsFilters() {
+    const searchVal = (document.getElementById('sessions-search')?.value || '').toLowerCase();
+    const modelFilter = document.getElementById('sessions-model-filter')?.value || '';
+    const sortVal = document.getElementById('sessions-sort')?.value || 'time-desc';
+
+    let filtered = allSessionsData.filter(s => {
+        if (searchVal && !s.sessionId.toLowerCase().includes(searchVal) && !(s.model || '').toLowerCase().includes(searchVal)) {
+            return false;
+        }
+        if (modelFilter && s.model !== modelFilter) return false;
+        return true;
+    });
+
+    // 排序
+    filtered.sort((a, b) => {
+        switch (sortVal) {
+            case 'time-asc': return (a.startTime || '').localeCompare(b.startTime || '');
+            case 'tokens-desc': return (b.totalTokens || 0) - (a.totalTokens || 0);
+            case 'tokens-asc': return (a.totalTokens || 0) - (b.totalTokens || 0);
+            case 'cost-desc': return sessionCost(b.model, b.inputTokens, b.outputTokens) - sessionCost(a.model, a.inputTokens, a.outputTokens);
+            default: return (b.lastTime || '').localeCompare(a.lastTime || '');
+        }
+    });
+
+    renderSessionsList(filtered);
+    renderSessionsStats(filtered);
+}
+
+function renderSessionsStats(sessions) {
+    let totalTokens = 0, totalCost = 0, totalMsgs = 0;
+    for (const s of sessions) {
+        totalTokens += s.totalTokens || 0;
+        totalMsgs += s.messageCount || 0;
+        totalCost += sessionCost(s.model, s.inputTokens, s.outputTokens);
+    }
+    const countEl = document.getElementById('sessions-count');
+    const totalTokEl = document.getElementById('sessions-total-tokens');
+    const totalCostEl = document.getElementById('sessions-total-cost');
+    if (countEl) countEl.textContent = sessions.length + ' 个';
+    if (totalTokEl) totalTokEl.textContent = formatTokens(totalTokens);
+    if (totalCostEl) totalCostEl.textContent = '$' + totalCost.toFixed(2);
+}
+
+function renderSessionsList(sessions) {
+    const listEl = document.getElementById('sessions-list');
+    if (!listEl) return;
+
+    if (sessions.length === 0) {
+        listEl.innerHTML = '<div class="sessions-empty">' +
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="sessions-empty-icon"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' +
+            '<div>' + (t('sessions_no_data') || '未找到 Claude Code 会话记录') + '</div>' +
+            '<div class="sessions-empty-hint">使用 Claude Code 后会自动产生会话记录</div>' +
+            '</div>';
+        return;
+    }
+
+    const maxTokens = sessions.reduce((m, s) => Math.max(m, s.totalTokens || 0), 1);
+
+    listEl.innerHTML = '<div class="sessions-list">' +
+        sessions.map(s => {
+            const shortId = s.sessionId.length > 12 ? s.sessionId.slice(0, 12) + '…' : s.sessionId;
+            const from = s.startTime ? s.startTime.slice(0, 16).replace('T', ' ') : '?';
+            const to = s.lastTime ? s.lastTime.slice(0, 16).replace('T', ' ') : '?';
+
+            let durStr = '';
+            if (s.startTime && s.lastTime) {
+                const t1 = new Date(s.startTime).getTime();
+                const t2 = new Date(s.lastTime).getTime();
+                if (t1 && t2 && t2 > t1) {
+                    const min = Math.round((t2 - t1) / 60000);
+                    durStr = min >= 60 ? (Math.floor(min / 60) + 'h ' + (min % 60) + 'm') : min + 'm';
+                }
+            }
+
+            const ratio = (s.totalTokens || 0) / maxTokens;
+            const dotColor = ratio > 0.5 ? 'var(--red)' : ratio > 0.15 ? 'var(--yellow)' : 'var(--green)';
+            const cost = sessionCost(s.model, s.inputTokens, s.outputTokens);
+            const modelShort = (s.model || '?').replace(/^claude-/i, '');
+
+            return '<div class="session-card" data-session-id="' + escHtml(s.sessionId) + '">' +
+                '<span class="session-dot" style="background:' + dotColor + ';"></span>' +
+                '<div class="session-card-body">' +
+                '<div class="session-card-top">' +
+                '<span class="session-id" title="' + escHtml(s.sessionId) + '">' + escHtml(shortId) + '</span>' +
+                '<span class="session-model-badge">' + escHtml(modelShort) + '</span>' +
+                (durStr ? '<span class="session-duration"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="session-icon"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>' + durStr + '</span>' : '') +
+                '</div>' +
+                '<div class="session-card-meta">' +
+                '<span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="session-icon"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' + s.messageCount + ' 条</span>' +
+                '<span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="session-icon"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>' + formatTokens(s.totalTokens) + '</span>' +
+                '<span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="session-icon"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/></svg>$' + cost.toFixed(2) + '</span>' +
+                '</div>' +
+                '</div>' +
+                '<div class="session-card-time">' +
+                '<span>' + from + '</span>' +
+                '<span>' + to + '</span>' +
+                '</div>' +
+                '<button class="session-detail-btn" title="查看详情" data-sid="' + escHtml(s.sessionId) + '">' +
+                '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><polyline points="9 18 15 12 9 6"/></svg>' +
+                '</button>' +
+                '</div>';
+        }).join('') + '</div>';
+
+    // 绑定详情按钮事件
+    listEl.querySelectorAll('.session-detail-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openSessionDetail(btn.dataset.sid);
+        });
+    });
+}
+
+function renderSessionsChart() {
+    const canvas = document.getElementById('sessions-model-chart');
+    if (!canvas) return;
+    const container = document.getElementById('sessions-chart-container');
+
+    const modelCounts = {};
+    let totalSessions = 0;
+    for (const s of allSessionsData) {
+        const m = s.model || 'unknown';
+        modelCounts[m] = (modelCounts[m] || 0) + 1;
+        totalSessions++;
+    }
+    const labels = Object.keys(modelCounts);
+    if (labels.length === 0 || totalSessions === 0) {
+        container.style.display = 'none';
+        return;
+    }
+    container.style.display = 'block';
+
+    if (window.__sessionsChart) window.__sessionsChart.destroy();
+
+    const colors = ['#34d399','#60a5fa','#fbbf24','#f87171','#a78bfa','#fb923c','#22d3ee','#e879f9','#f9a8d4','#94a3b8'];
+    window.__sessionsChart = new Chart(canvas.getContext('2d'), {
+        type: 'doughnut',
+        data: {
+            labels: labels.map(m => m.replace(/^claude-/i, '')),
+            datasets: [{
+                data: labels.map(m => modelCounts[m]),
+                backgroundColor: colors.slice(0, labels.length),
+                borderWidth: 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'right',
+                    labels: { color: '#94a3b8', font: { size: 11 }, padding: 12, boxWidth: 12 }
+                }
+            },
+            cutout: '55%'
+        }
+    });
 }
 
 /** 简易费用估算（与 pricing 包大致对齐） */
@@ -3816,83 +4085,104 @@ function sessionCost(model, inputTokens, outputTokens) {
     return inputTokens * r.in + outputTokens * r.out;
 }
 
-function renderSessions(data) {
-    const sessions = data.sessions || [];
-    const countEl = document.getElementById('sessions-count');
-    const totalTokEl = document.getElementById('sessions-total-tokens');
-    const totalCostEl = document.getElementById('sessions-total-cost');
-    const listEl = document.getElementById('sessions-list');
-    if (!listEl) return;
+/** 打开会话详情弹窗 */
+async function openSessionDetail(sessionId) {
+    const overlay = document.getElementById('sessionDetailOverlay');
+    const loading = document.getElementById('session-detail-loading');
+    const content = document.getElementById('session-detail-content');
+    const title = document.getElementById('session-detail-title');
+    if (!overlay || !loading || !content) return;
 
-    if (sessions.length === 0) {
-        if (countEl) countEl.textContent = '0';
-        if (totalTokEl) totalTokEl.textContent = '-';
-        if (totalCostEl) totalCostEl.textContent = '-';
-        listEl.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--text-2);">' +
-            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:48px;height:48px;opacity:0.3;margin-bottom:12px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' +
-            '<div>' + (t('sessions_no_data') || '未找到 Claude Code 会话记录') + '</div>' +
-            '<div style="font-size:0.8rem;margin-top:6px;opacity:0.6;">使用 Claude Code 后会自动产生会话记录</div>' +
-            '</div>';
-        return;
+    overlay.classList.add('active');
+    loading.style.display = '';
+    content.style.display = 'none';
+    title.textContent = '会话: ' + sessionId;
+
+    try {
+        const resp = await apiFetch('/ocgt/api/sessions?id=' + encodeURIComponent(sessionId));
+        if (!resp.ok) throw new Error(await resp.text());
+        const data = await resp.json();
+        renderSessionDetail(data, content);
+    } catch (err) {
+        content.innerHTML = '<div style="text-align:center;padding:40px;color:var(--red);">加载失败: ' + escHtml(err.message) + '</div>';
+    } finally {
+        loading.style.display = 'none';
+        content.style.display = '';
     }
+}
 
-    // 汇总统计
-    let totalTokens = 0, totalCost = 0, totalMsgs = 0;
-    for (const s of sessions) {
-        totalTokens += s.totalTokens || 0;
-        totalMsgs += s.messageCount || 0;
-        totalCost += sessionCost(s.model, s.inputTokens, s.outputTokens);
-    }
-    if (countEl) countEl.textContent = sessions.length + ' 个';
-    if (totalTokEl) totalTokEl.textContent = formatTokens(totalTokens);
-    if (totalCostEl) totalCostEl.textContent = '$' + totalCost.toFixed(2);
+/** 渲染会话详情 */
+function renderSessionDetail(data, container) {
+    const events = data.events || [];
+    let html = '<div class="session-detail-exchanges">';
+    let currentExchange = null;
+    let hasContent = false;
 
-    // 按 token 量给会话着色：小(绿) 中(黄) 大(红)
-    const maxTokens = sessions.reduce((m, s) => Math.max(m, s.totalTokens || 0), 1);
-
-    listEl.innerHTML = '<div style="display:flex;flex-direction:column;gap:8px;">' +
-        sessions.map(s => {
-            const sid = s.sessionId || '';
-            const shortId = sid.length > 12 ? sid.slice(0, 12) + '…' : sid;
-            const from = s.startTime ? s.startTime.slice(0, 16).replace('T', ' ') : '?';
-            const to = s.lastTime ? s.lastTime.slice(0, 16).replace('T', ' ') : '?';
-
-            // 时长计算（小时/分钟）
-            let durStr = '';
-            if (s.startTime && s.lastTime) {
-                const t1 = new Date(s.startTime).getTime();
-                const t2 = new Date(s.lastTime).getTime();
-                if (t1 && t2 && t2 > t1) {
-                    const min = Math.round((t2 - t1) / 60000);
-                    durStr = min >= 60 ? (Math.floor(min / 60) + 'h ' + (min % 60) + 'm') : min + 'm';
-                }
+    for (const evt of events) {
+        if (evt.type === 'user') {
+            if (currentExchange) {
+                html += currentExchange;
             }
-
-            // Token 量指示色
-            const ratio = s.totalTokens / maxTokens;
-            const dotColor = ratio > 0.5 ? 'var(--red)' : ratio > 0.15 ? 'var(--yellow)' : 'var(--green)';
-            const cost = sessionCost(s.model, s.inputTokens, s.outputTokens);
-
-            return '<div style="display:flex;align-items:center;gap:14px;padding:14px 18px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);transition:border-color 0.2s,box-shadow 0.2s;" onmouseover="this.style.borderColor=\'var(--border-hover)\';this.style.boxShadow=\'var(--shadow)\'" onmouseout="this.style.borderColor=\'\';this.style.boxShadow=\'\'">' +
-                '<span style="width:10px;height:10px;border-radius:50%;background:' + dotColor + ';flex-shrink:0;opacity:0.8;" title="' + (ratio > 0.5 ? '大会话' : ratio > 0.15 ? '中会话' : '小程序') + '"></span>' +
-                '<div style="flex:1;min-width:0;">' +
-                '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
-                '<span style="font-weight:600;color:var(--text-0);font-size:0.9rem;font-family:var(--mono);cursor:default;" title="' + escHtml(sid) + '">' + escHtml(shortId) + '</span>' +
-                '<span style="font-size:0.75rem;padding:1px 8px;border-radius:10px;background:var(--accent-soft);color:var(--accent-text);font-weight:500;">' + escHtml(s.model || '?') + '</span>' +
+            currentExchange = '<div class="sd-exchange">' +
+                '<div class="sd-exchange-head" onclick="toggleExchange(this)">' +
+                '<span class="sd-chevron">▶</span>' +
+                '<span class="sd-role-badge sd-role-user">你</span>' +
+                '<span class="sd-exchange-time">' + formatEventTime(evt.timestamp) + '</span>' +
                 '</div>' +
-                '<div style="display:flex;align-items:center;gap:16px;margin-top:6px;font-size:0.8rem;color:var(--text-2);flex-wrap:wrap;">' +
-                '<span>💬 ' + s.messageCount + ' 条</span>' +
-                '<span>📊 ' + formatTokens(s.totalTokens) + '</span>' +
-                '<span>💰 $' + cost.toFixed(2) + '</span>' +
-                (durStr ? '<span>⏱ ' + durStr + '</span>' : '') +
+                '<div class="sd-exchange-body" style="display:none;">';
+            hasContent = true;
+        } else if (evt.type === 'assistant' && currentExchange) {
+            const usage = evt.message?.usage || {};
+            const inTok = usage.input_tokens || 0;
+            const outTok = usage.output_tokens || 0;
+            const model = evt.message?.model || '';
+            currentExchange += '<div class="sd-turn">' +
+                '<div class="sd-turn-header">' +
+                '<span class="sd-role-badge sd-role-ai">AI</span>' +
+                '<span class="sd-turn-model">' + escHtml(model) + '</span>' +
                 '</div>' +
-                '</div>' +
-                '<div style="text-align:right;flex-shrink:0;font-size:0.75rem;color:var(--text-2);line-height:1.4;">' +
-                '<div>' + from + '</div>' +
-                '<div>' + to + '</div>' +
+                '<div class="sd-turn-tokens">' +
+                '↘ 输入 ' + inTok + ' · ↗ 输出 ' + outTok +
                 '</div>' +
                 '</div>';
-        }).join('') + '</div>';
+        }
+    }
+    if (currentExchange) html += currentExchange;
+    html += '</div>';
+
+    if (!hasContent) {
+        html = '<div class="sd-empty">无事件数据</div>';
+    }
+    container.innerHTML = html;
+}
+
+function toggleExchange(head) {
+    const body = head.nextElementSibling;
+    const chevron = head.querySelector('.sd-chevron');
+    if (body && chevron) {
+        const isHidden = body.style.display === 'none';
+        body.style.display = isHidden ? 'block' : 'none';
+        chevron.textContent = isHidden ? '▼' : '▶';
+        if (isHidden) {
+            const exchanges = head.closest('.session-detail-exchanges');
+            if (exchanges) {
+                exchanges.querySelectorAll('.sd-exchange-body').forEach(b => {
+                    if (b !== body) {
+                        b.style.display = 'none';
+                        b.parentElement.querySelector('.sd-chevron').textContent = '▶';
+                    }
+                });
+            }
+        }
+    }
+}
+
+function formatEventTime(ts) {
+    if (!ts) return '';
+    try {
+        const d = new Date(ts);
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch (_) { return ts; }
 }
 
 // Quota fetching and rendering

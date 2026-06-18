@@ -185,3 +185,82 @@ func parseSessionFile(filePath, sessionID string) *SessionStats {
 		LastTime:          lastTime,
 	}
 }
+
+// ReadSessionEvents 读取指定会话 ID 的 JSONL 文件，返回所有事件
+func ReadSessionEvents(projectsRoot, sessionID string) (*SessionDetailResponse, error) {
+	entries, err := os.ReadDir(projectsRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read projects dir: %w", err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		projectDir := filepath.Join(projectsRoot, entry.Name())
+		filePath := filepath.Join(projectDir, sessionID+".jsonl")
+		if _, err := os.Stat(filePath); err != nil {
+			continue
+		}
+		return parseSessionEvents(filePath, sessionID)
+	}
+	return nil, nil
+}
+
+// parseSessionEvents 解析 JSONL 文件中的所有事件
+func parseSessionEvents(filePath, sessionID string) (*SessionDetailResponse, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var events []SessionEvent
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 256*1024), 16*1024*1024)
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		var raw ClaudeCodeEvent
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+			continue
+		}
+
+		evt := SessionEvent{
+			Type:      raw.Type,
+			UUID:      raw.UUID,
+			Timestamp: raw.Timestamp,
+		}
+		if raw.Message != nil {
+			evt.Message = &EventMessage{
+				ID:    raw.Message.ID,
+				Model: raw.Message.Model,
+			}
+			if raw.Message.Usage != nil {
+				evt.Message.Usage = &EventUsage{
+					InputTokens:       raw.Message.Usage.InputTokens,
+					OutputTokens:      raw.Message.Usage.OutputTokens,
+					CacheReadTokens:   raw.Message.Usage.CacheReadTokens,
+					CacheCreateTokens: raw.Message.Usage.CacheCreateTokens,
+				}
+			}
+		}
+		events = append(events, evt)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return &SessionDetailResponse{
+		SessionID: sessionID,
+		Events:    events,
+	}, nil
+}

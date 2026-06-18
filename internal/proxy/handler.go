@@ -68,6 +68,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/ocgt/api/quota", s.apiQuota)
 	mux.HandleFunc("/ocgt/api/quota/refresh", s.apiRefreshQuota)
 	mux.HandleFunc("/ocgt/api/sessions", s.apiSessions)
+	mux.HandleFunc("/ocgt/api/hub/sync", s.apiHubSync)
 	s.registerStatsRoutes(mux)
 
 	mux.HandleFunc("/", s.serveStatic)
@@ -1654,16 +1655,30 @@ func (s *Server) apiSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 如果指定了 id 参数，返回会话详情
+	if sessionID := r.URL.Query().Get("id"); sessionID != "" {
+		detail, err := session.ReadSessionEvents(projectsRoot, sessionID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if detail == nil {
+			writeError(w, http.StatusNotFound, fmt.Errorf("session not found"))
+			return
+		}
+		writeJSON(w, http.StatusOK, detail)
+		return
+	}
+
+	// 原有逻辑：返回会话列表
 	sessions, err := session.ReadAllSessions(projectsRoot)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-
 	if sessions == nil {
 		sessions = []session.SessionStats{}
 	}
-
 	writeJSON(w, http.StatusOK, session.SessionsResponse{
 		Sessions: sessions,
 		Total:    len(sessions),
@@ -1691,4 +1706,17 @@ func (s *Server) resolveQuotaCredentials() (cookie, workspaceID string) {
 		workspaceID = profile.QuotaWorkspaceID
 	}
 	return
+}
+
+func (s *Server) apiHubSync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
+		return
+	}
+	if s.HubClient == nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("hub client not initialized"))
+		return
+	}
+	s.HubClient.SyncNow()
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }

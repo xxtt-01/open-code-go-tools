@@ -4,6 +4,16 @@
 - **决策:** 修改函数签名为 `func ... (outputTokens int, actualInputTokens int)`，调用方使用返回的真实 inputTokens
 - **影响范围:** 流式请求(deepseek 等)的 InputTokens 从估算值变为真实值
 
+## 2026-06-18 18:30: Hub/会话 后端 API 增强
+- **文件:**
+  - `internal/hub/client.go` — 新增 SyncNow() 公开方法
+  - `internal/proxy/handler.go` — 新增 POST /ocgt/api/hub/sync 路由；apiSessions 支持 ?id= 参数获取会话详情
+  - `internal/session/reader.go` — 新增 ReadSessionEvents() + parseSessionEvents() 读取单个 JSONL 的全部事件
+  - `internal/session/types.go` — 新增 SessionEvent/EventMessage/EventUsage/SessionDetailResponse 类型
+  - `internal/preferences/preferences.go` — IsValidView 添加 "sessions"
+- **原因:** 前端增强需要后端 API 支持
+- **影响范围:** internal/ 下 5 个文件
+
 ## 2026-06-02 11:20: 修复 Token 监控 Bug — Messages 端点 Token 记录为 0
 - **文件:** `internal/proxy/handler.go`
 - **根因:** `forwardAnthropicMessages` 成功响应透传客户端但使用空 `tokenUsage{}`

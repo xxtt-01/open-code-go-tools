@@ -41,3 +41,32 @@ type SessionsResponse struct {
 	Sessions []SessionStats `json:"sessions"`
 	Total    int            `json:"total"`
 }
+
+// SessionEvent 单条会话事件（API 输出用）
+type SessionEvent struct {
+	Type      string        `json:"type"`
+	UUID      string        `json:"uuid"`
+	Timestamp string        `json:"timestamp"`
+	Message   *EventMessage `json:"message,omitempty"`
+}
+
+// EventMessage 会话事件中的消息信息
+type EventMessage struct {
+	ID    string      `json:"id"`
+	Model string      `json:"model"`
+	Usage *EventUsage `json:"usage,omitempty"`
+}
+
+// EventUsage 会话事件中的 token 用量
+type EventUsage struct {
+	InputTokens       int `json:"input_tokens"`
+	OutputTokens      int `json:"output_tokens"`
+	CacheReadTokens   int `json:"cache_read_input_tokens"`
+	CacheCreateTokens int `json:"cache_creation_input_tokens"`
+}
+
+// SessionDetailResponse 会话详情 API 响应
+type SessionDetailResponse struct {
+	SessionID string         `json:"sessionId"`
+	Events    []SessionEvent `json:"events"`
+}

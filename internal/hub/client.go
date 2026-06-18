@@ -125,6 +125,14 @@ func (c *Client) DeviceID() string {
 	return c.deviceID
 }
 
+// SyncNow 立即执行一次数据推送。
+func (c *Client) SyncNow() {
+	if !c.config.Enabled || c.config.HubURL == "" {
+		return
+	}
+	c.pushOnce()
+}
+
 // pushOnce 执行一次数据推送。
 // 获取本地计数器快照，以 JSON 格式 POST 到 Hub 的 /api/ingest 端点。
 func (c *Client) pushOnce() {

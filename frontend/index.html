@@ -804,11 +804,18 @@
 
                 <!-- ========== Hub Multi-Device ========== -->
                 <section class="view" id="view-hub">
-                    <!-- 连接状态条 -->
-                    <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:20px;">
-                        <span id="hub-status-dot" style="width:10px;height:10px;border-radius:50%;background:var(--text-2);flex-shrink:0;"></span>
-                        <span id="hub-status-text" style="color:var(--text-1);font-size:0.9rem;" data-i18n="hub_disconnected">未连接</span>
-                        <span style="margin-left:auto;font-size:0.8rem;color:var(--text-2);" id="hub-device-id-label"></span>
+                    <!-- 连接状态条 + 操作按钮 -->
+                    <div class="hub-status-bar">
+                        <span id="hub-status-dot" class="hub-status-dot"></span>
+                        <span id="hub-status-text" class="hub-status-text" data-i18n="hub_disconnected">未连接</span>
+                        <span class="hub-device-id-label" id="hub-device-id-label"></span>
+                        <div class="hub-actions">
+                            <button class="btn-secondary btn-sm" id="hub-refresh-btn" type="button">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                                <span data-i18n="hub_refresh">刷新</span>
+                            </button>
+                            <button class="btn-primary btn-sm" id="hub-sync-now-btn" type="button" data-i18n="hub_sync_now">立即同步</button>
+                        </div>
                     </div>
 
                     <!-- 汇总统计 -->
@@ -831,23 +838,29 @@
                         </div>
                     </div>
 
-                    <!-- Device List -->
-                    <div class="card" style="margin-top: 16px; padding: 20px;">
-                        <h3 style="font-size: 14px; font-weight: 700; color: var(--text-0); margin-bottom: 12px;" data-i18n="hub_device_list">在线设备</h3>
-                        <div id="hub-devices-list" style="color: var(--text-2); font-size: 13px;">
-                            <span data-i18n="hub_no_devices">暂无设备数据</span>
+                    <!-- 设备列表 -->
+                    <div class="card hub-section">
+                        <div class="hub-section-header">
+                            <h3 data-i18n="hub_device_list">在线设备</h3>
+                            <span class="hub-device-count" id="hub-device-count">0</span>
+                        </div>
+                        <div id="hub-devices-list" class="hub-devices-list">
+                            <span class="hub-empty-hint" data-i18n="hub_no_devices">暂无设备数据</span>
                         </div>
                     </div>
 
-                    <!-- Model Usage Chart -->
-                    <div class="card" style="margin-top: 16px; padding: 20px;">
-                        <h3 style="font-size: 14px; font-weight: 700; color: var(--text-0); margin-bottom: 12px;" data-i18n="hub_model_breakdown">模型用量分布（全部设备）</h3>
+                    <!-- 模型用量分布 -->
+                    <div class="card hub-section">
+                        <div class="hub-section-header">
+                            <h3 data-i18n="hub_model_breakdown">模型用量分布（全部设备）</h3>
+                        </div>
                         <canvas id="hub-model-chart" height="200"></canvas>
                     </div>
                 </section>
 
                 <!-- ========== Sessions ========== -->
                 <section class="view" id="view-sessions">
+                    <!-- 统计卡片 -->
                     <div class="dashboard-grid" id="sessions-stats">
                         <div class="stat-card">
                             <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
@@ -872,7 +885,50 @@
                         </div>
                     </div>
 
+                    <!-- 控制栏：搜索 + 筛选 + 排序 -->
+                    <div class="sessions-control-bar">
+                        <div class="sessions-search-wrap">
+                            <svg class="sessions-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                            <input type="text" id="sessions-search" class="sessions-search-input" placeholder="搜索会话 ID 或模型名称...">
+                        </div>
+                        <select id="sessions-model-filter" class="sessions-filter-select">
+                            <option value="" data-i18n="sessions_filter_all">全部模型</option>
+                        </select>
+                        <select id="sessions-sort" class="sessions-filter-select">
+                            <option value="time-desc" data-i18n="sessions_sort_time_desc">最新在前</option>
+                            <option value="time-asc" data-i18n="sessions_sort_time_asc">最早在前</option>
+                            <option value="tokens-desc" data-i18n="sessions_sort_tokens_desc">Token 最多</option>
+                            <option value="tokens-asc" data-i18n="sessions_sort_tokens_asc">Token 最少</option>
+                            <option value="cost-desc" data-i18n="sessions_sort_cost_desc">费用最高</option>
+                        </select>
+                    </div>
+
+                    <!-- 模型分布图 -->
+                    <div class="card sessions-chart-card" id="sessions-chart-container" style="display:none;">
+                        <div class="hub-section-header">
+                            <h3 data-i18n="sessions_model_chart">模型分布</h3>
+                        </div>
+                        <canvas id="sessions-model-chart" height="120"></canvas>
+                    </div>
+
+                    <!-- 会话列表 -->
                     <div id="sessions-list"></div>
+
+                    <!-- 会话详情弹窗 -->
+                    <div class="modal-overlay" id="sessionDetailOverlay" aria-hidden="true">
+                        <div class="modal-card session-detail-modal" role="dialog" aria-modal="true">
+                            <div class="modal-header">
+                                <h3 id="session-detail-title">会话详情</h3>
+                                <button class="modal-close" id="sessionDetailClose" aria-label="Close">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                </button>
+                            </div>
+                            <div class="modal-body" id="session-detail-body">
+                                <div id="session-detail-loading" style="text-align:center;padding:40px;color:var(--text-2);">加载中...</div>
+                                <div id="session-detail-content" style="display:none;"></div>
+                            </div>
+                        </div>
+                    </div>
                 </section>
 
             </div>
@@ -1149,27 +1205,32 @@
                         <span data-i18n="pref_hub_enable">启用同步</span>
                     </label>
                 </div>
-                <div class="settings-panel-row" id="hub-config-fields">
-                    <div class="settings-panel-inline" style="width:100%;">
-                        <span class="sp-row-label" data-i18n="pref_hub_url">Hub 地址</span>
-                        <input type="text" id="hub-url" placeholder="http://192.168.1.100:17321" style="width:100%;font-family:var(--mono);">
+                <div class="settings-panel-row" id="hub-config-fields" style="flex-direction:column;padding-left:52px;">
+                    <div class="hub-settings-grid">
+                        <div class="hub-settings-field">
+                            <label class="sp-row-label" data-i18n="pref_hub_url">Hub 地址</label>
+                            <input type="text" id="hub-url" placeholder="http://192.168.1.100:17321" class="hub-settings-input">
+                        </div>
+                        <div class="hub-settings-field">
+                            <label class="sp-row-label" data-i18n="pref_hub_secret">同步密钥</label>
+                            <input type="password" id="hub-secret" placeholder="(留空不修改)" class="hub-settings-input">
+                        </div>
+                        <div class="hub-settings-field">
+                            <label class="sp-row-label" data-i18n="pref_hub_device_name">设备名称</label>
+                            <input type="text" id="hub-device-name" placeholder="家里台式机" class="hub-settings-input">
+                        </div>
+                        <div class="hub-settings-field">
+                            <label class="sp-row-label" data-i18n="pref_hub_interval">推送间隔（秒）</label>
+                            <input type="number" id="hub-interval" value="120" min="30" max="1800" class="hub-settings-input">
+                        </div>
                     </div>
-                    <div class="settings-panel-inline" style="width:100%;">
-                        <span class="sp-row-label" data-i18n="pref_hub_secret">同步密钥</span>
-                        <input type="password" id="hub-secret" placeholder="(留空不修改)" style="width:100%;">
-                    </div>
-                    <div class="settings-panel-inline" style="width:100%;">
-                        <span class="sp-row-label" data-i18n="pref_hub_device_name">设备名称</span>
-                        <input type="text" id="hub-device-name" placeholder="家里台式机" style="width:100%;">
-                    </div>
-                    <div class="settings-panel-inline" style="width:100%;">
-                        <span class="sp-row-label" data-i18n="pref_hub_interval">推送间隔（秒）</span>
-                        <input type="number" id="hub-interval" value="120" min="30" max="1800" style="width:100%;">
+                    <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
+                        <span id="hub-config-status" style="font-size:0.85rem;color:var(--text-2);"></span>
                     </div>
                 </div>
                 <div class="settings-panel-row" style="flex-direction:row;gap:8px;">
                     <button class="btn-primary btn-sm" id="save-hub-config-btn" type="button" data-i18n="pref_hub_save">保存同步设置</button>
-                    <span id="hub-config-status" style="font-size:0.85rem;color:var(--text-2);align-self:center;"></span>
+                    <button class="btn-secondary btn-sm" id="test-hub-connection-btn" type="button" data-i18n="pref_hub_test" style="display:none;">测试连接</button>
                 </div>
 
                 <div class="sp-divider"></div>

@@ -3,6 +3,19 @@
   - `frontend/app.js` — 前端获取/渲染额度
   - `frontend/index.html` — 额度卡片
   - `frontend/style.css` — 额度进度条样式
+
+## 2026-06-18 18:30: Hub/会话 UI 全面优化
+- **文件:**
+  - `frontend/index.html` — Hub 设置 2×2 网格、Hub 主页增强（状态栏+操作按钮）、会话页搜索/筛选/排序/图表/详情弹窗
+  - `frontend/app.js` — renderHubStats 使用 CSS 类、renderSessions 全面重构、搜索/筛选/排序/图表/详情逻辑、i18n 词条、按钮事件绑定
+  - `frontend/style.css` — Hub 设置网格、Hub 主页所有组件、会话控制栏/列表/图表/详情弹窗全部样式
+- **原因:** 用户反馈：跨设备同步设置区域拥挤、多设备同步和会话 tab UI 和功能需要强化
+- **决策:** 
+  - Hub 设置 2×2 网格布局替代纵向堆叠，空间减少 40%
+  - Hub 主页增加「立即同步」「刷新」按钮，设备列表显示主机名和状态徽章
+  - 会话页引入搜索/筛选/排序/模型分布图/详情展开弹窗，参考 Token Monitor 的 exchange/turn 分组
+  - 全面用 SVG 图标替代 emoji，用 CSS 类替代内联样式
+- **影响范围:** frontend/ 下三个文件
   - `frontend/src/wailsjs/go/main/App.d.ts` — TypeScript 类型
   - `frontend/src/wailsjs/go/main/App.js` — JS 绑定
 - **原因:** 参考 `@yinxe/opencode-tui-usage`，在 ocgt GUI 显示 Rolling/Weekly/Monthly 额度

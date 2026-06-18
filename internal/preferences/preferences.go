@@ -215,7 +215,7 @@ func IsValidLanguage(value string) bool {
 
 func IsValidView(value string) bool {
 	switch value {
-	case "dashboard", "settings", "terminal", "history", "traffic-detail", "hub":
+	case "dashboard", "settings", "terminal", "history", "traffic-detail", "hub", "sessions":
 		return true
 	default:
 		return false
