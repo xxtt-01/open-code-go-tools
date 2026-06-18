@@ -280,3 +280,15 @@
   - 列表卡片展示 sessionId 缩写、模型、消息数、Token 用量、起止时间
   - 同时修复了 `escHtml` 未定义的潜在 bug（添加 `const escHtml = escapeHtml` 别名）
 - **影响范围:** 侧边栏新增第 8 个 Tab（会话）；后端需提供 `/ocgt/api/sessions` HTTP 端点
+
+## 2026-06-18: Traffic Radar UI 视觉抛光
+- **文件:**
+  - `frontend/style.css` — 5 处 CSS 修改
+- **原因:** Traffic Radar 仪表盘中 4 个 CSS 规则硬编码 #FF6B6B（多巴胺色板第 0 色），未使用主题 accent 系统色，导致自定义主题色时不一致；卡片 hover 动效不够精致
+- **决策:**
+  - `.tr-btn.active` 背景/边框 #FF6B6B → var(--accent)
+  - `.pg-btn.pg-active` 背景/边框 #FF6B6B → var(--accent)，阴影 rgba(255,107,107,0.3) → var(--accent-glow)
+  - `.td-history-table tbody tr:hover td` 背景 rgba(255,107,107,0.04) → var(--accent-soft)
+  - `.td-spinner` 边框顶部色 #FF6B6B → var(--accent)
+  - `.ts-card:hover` 上浮动效 -1px → -2px 增强动感
+- **影响范围:** 仅 CSS 改动，无 JS/HTML/后端变更。主题色切换后，时间范围按钮、分页激活态、hover 高亮、加载动画全部跟随系统 accent 色
