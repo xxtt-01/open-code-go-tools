@@ -9,6 +9,10 @@ export function ClearSystemEnv():Promise<string>;
 
 export function FetchQuota():Promise<Record<string, any>>;
 
+export function GetHubConfig():Promise<string>;
+
+export function GetHubStatus():Promise<string>;
+
 export function GetListenAddress():Promise<string>;
 
 export function GetLocalToken():Promise<string>;
@@ -40,6 +44,8 @@ export function QuitApp():Promise<void>;
 export function RemoveVSCodeEnv():Promise<string>;
 
 export function RepairAllConfigurations():Promise<string>;
+
+export function SaveHubConfig(arg1:boolean,arg2:string,arg3:string,arg4:string,arg5:number):Promise<string>;
 
 export function SaveLogPreferences(arg1:boolean,arg2:string,arg3:number):Promise<string>;
 

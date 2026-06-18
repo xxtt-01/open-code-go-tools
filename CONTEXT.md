@@ -26,5 +26,5 @@ OCGT 进程中维护的内存计数器，每处理完一个代理请求后递增
 ### Auth Secret（同步密钥）
 设备连接 Hub 时使用的共享密钥，通过 `Authorization: Bearer <secret>` 或 `X-OCGT-Secret` 请求头传递。
 
-### Session（会话，待定）
-属于同一轮对话的一组请求。当前版本不跟踪会话，后续作为独立优化。`requestLogEntry` 可能需要增加 `sessionId` 字段以支持会话级统计。
+### Session（会话）
+属于同一轮对话的一组请求。OCGT 通过读取工具日志文件（如 `~/.claude/projects/*.jsonl`）中的 `sessionId` 字段来获取真实会话 ID，而非从代理请求中推断。会话数据作为现有代理数据的补充维度，不替代现有的请求级记录。

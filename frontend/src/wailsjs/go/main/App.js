@@ -18,6 +18,14 @@ export function FetchQuota() {
   return window['go']['main']['App']['FetchQuota']();
 }
 
+export function GetHubConfig() {
+  return window['go']['main']['App']['GetHubConfig']();
+}
+
+export function GetHubStatus() {
+  return window['go']['main']['App']['GetHubStatus']();
+}
+
 export function GetListenAddress() {
   return window['go']['main']['App']['GetListenAddress']();
 }
@@ -80,6 +88,10 @@ export function RemoveVSCodeEnv() {
 
 export function RepairAllConfigurations() {
   return window['go']['main']['App']['RepairAllConfigurations']();
+}
+
+export function SaveHubConfig(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SaveHubConfig'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function SaveLogPreferences(arg1, arg2, arg3) {
