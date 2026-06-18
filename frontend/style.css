@@ -3125,6 +3125,27 @@ html[data-theme="dark"] .td-chart-body canvas { filter:invert(0); }
     color: var(--accent-text);
     border-color: var(--accent-glow);
 }
+
+/* Exchange header metrics */
+.sd-ex-metrics {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    flex-shrink: 0;
+    margin-left: auto;
+    margin-right: 10px;
+}
+.sd-ex-value {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-0);
+    font-family: var(--mono);
+}
+.sd-ex-pct {
+    font-size: 10px;
+    color: var(--text-2);
+    font-family: var(--mono);
+}
 .sd-chevron {
     font-size: 10px;
     color: var(--text-2);

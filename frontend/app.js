@@ -4275,11 +4275,11 @@ function renderSessionDetail(data, container) {
     }
 
     const maxTokens = valid.reduce((m, e) => Math.max(m, e.tokens || 0), 1);
+    const totalTokens = valid.reduce((s, e) => s + (e.tokens || 0), 0);
     let html = '<div class="session-detail-exchanges">';
     for (const ex of valid) {
         let preview = '';
         if (ex.text) {
-            // 图片提示特殊标记
             if (/\[Image #?\d*\]/i.test(ex.text)) {
                 preview = ' 🖼️ ' + escHtml(ex.text.replace(/\[Image #?\d*\]/gi, '').trim().slice(0, 80));
                 if (!preview.trim()) preview = ' 🖼️ [图片]';
@@ -4287,16 +4287,21 @@ function renderSessionDetail(data, container) {
                 preview = '：' + escHtml(ex.text.slice(0, 200));
             }
         }
-        const pct = ((ex.tokens || 0) / maxTokens * 100).toFixed(1);
+        const barPct = ((ex.tokens || 0) / maxTokens * 100).toFixed(1);
+        const totalPct = totalTokens > 0 ? ((ex.tokens || 0) / totalTokens * 100).toFixed(1) : 0;
 
         html += '<div class="sd-exchange">' +
             '<div class="sd-exchange-head" onclick="toggleExchange(this)">' +
             '<span class="sd-chevron">▶</span>' +
             '<span class="sd-role-badge sd-role-user">你</span>' +
             (preview ? '<span class="sd-preview">' + preview + '</span>' : '') +
+            '<span class="sd-ex-metrics">' +
+            '<span class="sd-ex-value">' + formatTokens(ex.tokens) + '</span>' +
+            '<span class="sd-ex-pct">' + totalPct + '%</span>' +
+            '</span>' +
             '<span class="sd-exchange-time">' + formatEventTime(ex.time) + '</span>' +
             '</div>' +
-            '<div class="sd-exchange-bar"><div class="sd-exchange-bar-fill" style="width:' + pct + '%;background:var(--accent);"></div></div>' +
+            '<div class="sd-exchange-bar"><div class="sd-exchange-bar-fill" style="width:' + barPct + '%;background:var(--accent);"></div></div>' +
             '<div class="sd-exchange-body" style="display:none;">';
 
         for (const turn of ex.turns) {
