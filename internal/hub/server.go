@@ -19,7 +19,7 @@ import (
 // Server is the Hub HTTP server for cross-device sync.
 type Server struct {
 	store        *HubStore
-	storePath    string
+	dataDir      string
 	storeMu      sync.Mutex
 	secret       string
 	staleAfterMs int64
@@ -76,7 +76,7 @@ func NewHubServer(opt ServerOption) (*Server, error) {
 	s := &Server{
 		secret:       opt.Secret,
 		staleAfterMs: opt.StaleAfterMs,
-		storePath:    opt.DataDir,
+		dataDir:    opt.DataDir,
 		host:         host,
 		port:         opt.Port,
 		sseClients:   make(map[io.Writer]struct{}),
@@ -469,7 +469,7 @@ func addDimStatsMap(target, src map[string]DimStats) {
 
 // storeFilePath returns the full path to the devices.json store file.
 func (s *Server) storeFilePath() string {
-	return filepath.Join(s.storePath, "devices.json")
+	return filepath.Join(s.dataDir, "devices.json")
 }
 
 // saveStore atomically writes the current store to disk (temp file + rename).

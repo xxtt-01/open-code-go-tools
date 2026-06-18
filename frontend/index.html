@@ -797,47 +797,44 @@
 
                 <!-- ========== Hub Multi-Device ========== -->
                 <section class="view" id="view-hub">
-                    <div class="dashboard-grid" id="hub-stats">
-                        <div class="stat-card">
-                            <div class="stat-icon">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2" /><line x1="2" y1="12" x2="22" y2="12" /><line x1="12" y1="2" x2="12" y2="22" /></svg>
-                            </div>
+                    <!-- 连接状态条 -->
+                    <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:20px;">
+                        <span id="hub-status-dot" style="width:10px;height:10px;border-radius:50%;background:var(--text-2);flex-shrink:0;"></span>
+                        <span id="hub-status-text" style="color:var(--text-1);font-size:0.9rem;" data-i18n="hub_disconnected">未连接</span>
+                        <span style="margin-left:auto;font-size:0.8rem;color:var(--text-2);" id="hub-device-id-label"></span>
+                    </div>
+
+                    <!-- 汇总统计 -->
+                    <div class="dashboard-grid">
+                        <div class="stat-card stat-card-wide">
+                            <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
                             <div class="stat-info">
-                                <span class="stat-label" data-i18n="hub_devices">已连接设备</span>
-                                <h3 class="stat-value" id="hub-device-count">-</h3>
+                                <span class="stat-label" data-i18n="hub_total_tokens">多设备 Token 总计</span>
+                                <h3 class="stat-value mono" id="hub-total-tokens">-</h3>
+                                <span class="stat-label" style="font-size:0.8rem;" id="hub-today-tokens"></span>
                             </div>
                         </div>
-                        <div class="stat-card">
-                            <div class="stat-icon">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
-                            </div>
+                        <div class="stat-card stat-card-wide">
+                            <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></div>
                             <div class="stat-info">
-                                <span class="stat-label" data-i18n="hub_last_sync">最近同步</span>
-                                <h3 class="stat-value" id="hub-last-sync">-</h3>
-                            </div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-icon">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
-                            </div>
-                            <div class="stat-info">
-                                <span class="stat-label" data-i18n="hub_sync_profile">同步配置</span>
-                                <h3 class="stat-value" id="hub-sync-status">-</h3>
+                                <span class="stat-label" data-i18n="hub_total_cost">多设备费用总计</span>
+                                <h3 class="stat-value mono" id="hub-total-cost">-</h3>
+                                <span class="stat-label" style="font-size:0.8rem;" id="hub-today-cost"></span>
                             </div>
                         </div>
                     </div>
 
                     <!-- Device List -->
                     <div class="card" style="margin-top: 16px; padding: 20px;">
-                        <h3 style="font-size: 14px; font-weight: 700; color: var(--text-0); margin-bottom: 12px;" data-i18n="hub_device_list">设备列表</h3>
-                        <div id="hub-device-list" style="color: var(--text-2); font-size: 13px;">
-                            <span data-i18n="hub_no_devices">暂无已连接设备</span>
+                        <h3 style="font-size: 14px; font-weight: 700; color: var(--text-0); margin-bottom: 12px;" data-i18n="hub_device_list">在线设备</h3>
+                        <div id="hub-devices-list" style="color: var(--text-2); font-size: 13px;">
+                            <span data-i18n="hub_no_devices">暂无设备数据</span>
                         </div>
                     </div>
 
                     <!-- Model Usage Chart -->
                     <div class="card" style="margin-top: 16px; padding: 20px;">
-                        <h3 style="font-size: 14px; font-weight: 700; color: var(--text-0); margin-bottom: 12px;" data-i18n="hub_model_usage">模型用量分布</h3>
+                        <h3 style="font-size: 14px; font-weight: 700; color: var(--text-0); margin-bottom: 12px;" data-i18n="hub_model_breakdown">模型用量分布（全部设备）</h3>
                         <canvas id="hub-model-chart" height="200"></canvas>
                     </div>
                 </section>
@@ -1100,22 +1097,43 @@
                 <div class="settings-panel-section">
                     <div class="sp-section-icon">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="2" y="2" width="20" height="20" rx="2" />
-                            <line x1="2" y1="12" x2="22" y2="12" />
-                            <line x1="12" y1="2" x2="12" y2="22" />
+                            <rect x="2" y="2" width="8" height="8" rx="1"/><rect x="14" y="2" width="8" height="8" rx="1"/>
+                            <rect x="2" y="14" width="8" height="8" rx="1"/><rect x="14" y="14" width="8" height="8" rx="1"/>
                         </svg>
                     </div>
                     <div class="sp-section-content">
-                        <div class="sp-section-label" data-i18n="pref_hub">Hub 同步</div>
-                        <div class="sp-section-desc" data-i18n="pref_hub_desc">跨设备配置同步与 Hub 连接</div>
+                        <div class="sp-section-label" data-i18n="pref_hub_title">跨设备同步</div>
+                        <div class="sp-section-desc" data-i18n="pref_hub_desc">将使用统计同步到 Hub，在多台设备间查看汇总数据</div>
                     </div>
                 </div>
                 <div class="settings-panel-row">
-                    <span class="sp-row-label" data-i18n="hub_server_url">Hub 服务器地址</span>
-                    <div class="settings-panel-inline">
-                        <input type="text" id="hub-server-url" placeholder="https://hub.example.com">
-                        <button class="btn-secondary btn-sm" id="save-hub-config-btn" type="button" data-i18n="btn_save_hub">保存</button>
+                    <label class="toggle-label">
+                        <input type="checkbox" id="hub-enabled">
+                        <span class="toggle-track"></span>
+                        <span data-i18n="pref_hub_enable">启用同步</span>
+                    </label>
+                </div>
+                <div class="settings-panel-row" id="hub-config-fields">
+                    <div class="settings-panel-inline" style="width:100%;">
+                        <span class="sp-row-label" data-i18n="pref_hub_url">Hub 地址</span>
+                        <input type="text" id="hub-url" placeholder="http://192.168.1.100:17321" style="width:100%;font-family:var(--mono);">
                     </div>
+                    <div class="settings-panel-inline" style="width:100%;">
+                        <span class="sp-row-label" data-i18n="pref_hub_secret">同步密钥</span>
+                        <input type="password" id="hub-secret" placeholder="(留空不修改)" style="width:100%;">
+                    </div>
+                    <div class="settings-panel-inline" style="width:100%;">
+                        <span class="sp-row-label" data-i18n="pref_hub_device_name">设备名称</span>
+                        <input type="text" id="hub-device-name" placeholder="家里台式机" style="width:100%;">
+                    </div>
+                    <div class="settings-panel-inline" style="width:100%;">
+                        <span class="sp-row-label" data-i18n="pref_hub_interval">推送间隔（秒）</span>
+                        <input type="number" id="hub-interval" value="120" min="30" max="1800" style="width:100%;">
+                    </div>
+                </div>
+                <div class="settings-panel-row" style="flex-direction:row;gap:8px;">
+                    <button class="btn-primary btn-sm" id="save-hub-config-btn" type="button" data-i18n="pref_hub_save">保存同步设置</button>
+                    <span id="hub-config-status" style="font-size:0.85rem;color:var(--text-2);align-self:center;"></span>
                 </div>
 
                 <div class="sp-divider"></div>

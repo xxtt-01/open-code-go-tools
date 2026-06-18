@@ -465,17 +465,23 @@ const i18n = {
         nav_hub: "多设备同步",
         title_hub: "多设备同步",
         subtitle_hub: "跨设备 Hub 配置同步与状态监控",
-        hub_devices: "已连接设备",
-        hub_last_sync: "最近同步",
-        hub_sync_profile: "同步配置",
-        hub_device_list: "设备列表",
-        hub_no_devices: "暂无已连接设备",
-        hub_model_usage: "模型用量分布",
-        pref_hub: "Hub 同步",
-        pref_hub_desc: "跨设备配置同步与 Hub 连接",
-        hub_server_url: "Hub 服务器地址",
-        btn_save_hub: "保存",
-        hub_sync_now: "立即同步"
+        hub_disconnected: "未连接",
+        hub_connected: "已连接",
+        hub_total_tokens: "多设备 Token 总计",
+        hub_total_cost: "多设备费用总计",
+        hub_today_tokens: "",
+        hub_today_cost: "",
+        hub_device_list: "在线设备",
+        hub_no_devices: "暂无设备数据",
+        hub_model_breakdown: "模型用量分布（全部设备）",
+        pref_hub_title: "跨设备同步",
+        pref_hub_desc: "将使用统计同步到 Hub，在多台设备间查看汇总数据",
+        pref_hub_enable: "启用同步",
+        pref_hub_url: "Hub 地址",
+        pref_hub_secret: "同步密钥",
+        pref_hub_device_name: "设备名称",
+        pref_hub_interval: "推送间隔（秒）",
+        pref_hub_save: "保存同步设置",
     },
     en: {
         nav_dashboard: "Status",
@@ -808,15 +814,24 @@ const i18n = {
         token_total_label: "Total: {{count}} tokens",
         nav_hub: "Multi-Device",
         title_hub: "Multi-Device Sync",
-        subtitle_hub: "Cross-device Hub configuration sync and status",
-        hub_devices: "Connected Devices",
-        hub_last_sync: "Last Sync",
-        hub_sync_profile: "Sync Config",
-        hub_device_list: "Device List",
-        hub_no_devices: "No connected devices",
-        hub_model_usage: "Model Usage Distribution",
-        pref_hub: "Hub Sync",
-        pref_hub_desc: "Cross-device configuration sync and Hub connection",
+        subtitle_hub: "Cross-device usage statistics aggregation",
+        hub_disconnected: "Disconnected",
+        hub_connected: "Connected",
+        hub_total_tokens: "Multi-Device Total Tokens",
+        hub_total_cost: "Multi-Device Total Cost",
+        hub_today_tokens: "",
+        hub_today_cost: "",
+        hub_device_list: "Online Devices",
+        hub_no_devices: "No device data",
+        hub_model_breakdown: "Model Usage (All Devices)",
+        pref_hub_title: "Cross-Device Sync",
+        pref_hub_desc: "Sync usage stats to Hub for cross-device aggregation",
+        pref_hub_enable: "Enable Sync",
+        pref_hub_url: "Hub URL",
+        pref_hub_secret: "Sync Secret",
+        pref_hub_device_name: "Device Name",
+        pref_hub_interval: "Push Interval (sec)",
+        pref_hub_save: "Save Sync Settings",
         hub_server_url: "Hub Server URL",
         btn_save_hub: "Save",
         hub_sync_now: "Sync Now"
@@ -3364,25 +3379,7 @@ function setupThemeLangHandlers() {
     // Hub config save button
     const saveHubBtn = document.getElementById('save-hub-config-btn');
     if (saveHubBtn) {
-        saveHubBtn.addEventListener('click', async () => {
-            const url = document.getElementById('hub-server-url').value.trim();
-            try {
-                saveHubBtn.disabled = true;
-                saveHubBtn.textContent = t('status_saving');
-                const res = await callWails('SaveHubConfig', url);
-                if (res === 'success') {
-                    toastI18n('toast_saved', 'success');
-                } else {
-                    toast(t('toast_save_failed') + ': ' + (res || ''), 'error');
-                }
-            } catch (err) {
-                console.error('SaveHubConfig error:', err);
-                toast(t('toast_save_failed') + ': ' + err.message, 'error');
-            } finally {
-                saveHubBtn.disabled = false;
-                saveHubBtn.textContent = t('btn_save_hub');
-            }
-        });
+        saveHubBtn.addEventListener('click', saveHubConfig);
     }
 }
 
@@ -3595,123 +3592,178 @@ function setupEnvRepairHandlers() {
 
 // ── Hub cross-device sync ──
 
-/** Load hub config from backend and populate the input field */
+/** Load hub config from backend and populate the settings form */
 async function loadHubConfig() {
-    const input = document.getElementById('hub-server-url');
-    if (!input) return;
     try {
-        const config = await callWails('GetHubConfig');
-        if (config && config.server_url) {
-            input.value = config.server_url;
+        const raw = await callWails('GetHubConfig');
+        if (!raw) return;
+        const cfg = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        const setChecked = (id, val) => { const el = document.getElementById(id); if (el) el.checked = !!val; };
+        const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val != null ? val : ''; };
+        setChecked('hub-enabled', cfg.enabled);
+        setVal('hub-url', cfg.hubUrl || '');
+        setVal('hub-device-name', cfg.deviceName || '');
+        setVal('hub-interval', cfg.pushIntervalSec || 120);
+        if (cfg.hasSecret) {
+            const el = document.getElementById('hub-secret');
+            if (el) el.placeholder = '•••••••• (已设置)';
         }
     } catch (err) {
         console.error('Failed to load hub config:', err);
     }
 }
 
-/** Fetch hub status and refresh entire dashboard */
+/** Save hub config from settings form */
+async function saveHubConfig() {
+    const enabled = document.getElementById('hub-enabled')?.checked || false;
+    const hubUrl = document.getElementById('hub-url')?.value?.trim() || '';
+    const secret = document.getElementById('hub-secret')?.value || '';
+    const deviceName = document.getElementById('hub-device-name')?.value?.trim() || '';
+    const interval = parseInt(document.getElementById('hub-interval')?.value) || 120;
+
+    const statusEl = document.getElementById('hub-config-status');
+    if (statusEl) statusEl.textContent = '保存中...';
+
+    try {
+        const res = await callWails('SaveHubConfig', enabled, hubUrl, secret, deviceName, interval);
+        if (statusEl) {
+            statusEl.textContent = res === 'success' ? '✓ 已保存' : '✗ ' + (res || '');
+            setTimeout(() => { statusEl.textContent = ''; }, 3000);
+        }
+    } catch (err) {
+        if (statusEl) statusEl.textContent = '✗ ' + err.message;
+    }
+}
+
+/** Fetch hub status and refresh entire hub dashboard */
 async function refreshHubDashboard() {
     try {
-        const data = await callWails('GetHubStatus');
-        if (!data) {
-            document.getElementById('hub-device-count').textContent = '-';
-            document.getElementById('hub-last-sync').textContent = '-';
-            document.getElementById('hub-sync-status').textContent = t('status_not_configured');
-            document.getElementById('hub-device-list').innerHTML = '<span>' + t('hub_no_devices') + '</span>';
-            return;
+        const raw = await callWails('GetHubStatus');
+        if (!raw) return;
+        const data = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        const statusDot = document.getElementById('hub-status-dot');
+        const statusText = document.getElementById('hub-status-text');
+        const deviceIdLabel = document.getElementById('hub-device-id-label');
+
+        if (data && data.connected && data.remoteStats) {
+            if (statusDot) statusDot.style.background = 'var(--green)';
+            if (statusText) statusText.textContent = t('hub_connected') || '已连接';
+            if (deviceIdLabel) deviceIdLabel.textContent = 'ID: ' + (data.deviceId || '');
+            renderHubStats(data.remoteStats);
+        } else {
+            if (statusDot) statusDot.style.background = 'var(--text-2)';
+            if (statusText) statusText.textContent = t('hub_disconnected') || '未连接';
+            if (deviceIdLabel) deviceIdLabel.textContent = '';
+            document.getElementById('hub-total-tokens').textContent = '-';
+            document.getElementById('hub-total-cost').textContent = '-';
+            document.getElementById('hub-today-tokens').textContent = '';
+            document.getElementById('hub-today-cost').textContent = '';
+            document.getElementById('hub-devices-list').innerHTML = '<span>' + (t('hub_no_devices') || '暂无设备数据') + '</span>';
         }
-        renderHubStats(data);
-        renderHubModelChart(data);
     } catch (err) {
         console.error('Failed to refresh hub dashboard:', err);
     }
 }
 
-/** Render hub stat cards and device list */
-function renderHubStats(data) {
-    const deviceCount = data.devices ? data.devices.length : 0;
-    document.getElementById('hub-device-count').textContent = deviceCount;
-    document.getElementById('hub-last-sync').textContent = data.last_sync_at || '-';
-    document.getElementById('hub-sync-status').textContent = data.sync_enabled ? t('sync_active') : t('status_not_configured');
+/** Render hub stat cards and device list from aggregated stats */
+function renderHubStats(stats) {
+    if (!stats) return;
 
-    const listEl = document.getElementById('hub-device-list');
-    if (data.devices && data.devices.length > 0) {
-        listEl.innerHTML = '<div style="display:flex;flex-direction:column;gap:8px;">' +
-            data.devices.map(d => '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);">' +
-                '<span class="sync-dot' + (d.online ? '' : ' inactive') + '"></span>' +
-                '<span style="font-weight:600;color:var(--text-0);">' + escHtml(d.name || d.id) + '</span>' +
-                '<span style="margin-left:auto;font-size:12px;color:var(--text-2);font-family:var(--mono);">' + escHtml(d.last_seen || '') + '</span>' +
-            '</div>').join('') +
-        '</div>';
+    // Aggregate cards
+    const totalTokens = stats.allTime?.totalTokens || 0;
+    const totalCost = stats.allTime?.estimatedCost || 0;
+    const todayTokens = stats.today?.totalTokens || 0;
+    const todayCost = stats.today?.estimatedCost || 0;
+
+    document.getElementById('hub-total-tokens').textContent = formatTokens(totalTokens);
+    document.getElementById('hub-total-cost').textContent = '$' + Number(totalCost).toFixed(2);
+    document.getElementById('hub-today-tokens').textContent = '今日: ' + formatTokens(todayTokens);
+    document.getElementById('hub-today-cost').textContent = '今日: $' + Number(todayCost).toFixed(2);
+
+    // Device list
+    const listEl = document.getElementById('hub-devices-list');
+    const devices = stats.devices || [];
+    if (devices.length === 0) {
+        listEl.innerHTML = '<span>' + (t('hub_no_devices') || '暂无设备数据') + '</span>';
     } else {
-        listEl.innerHTML = '<span>' + t('hub_no_devices') + '</span>';
+        listEl.innerHTML = '<div style="display:flex;flex-direction:column;gap:6px;">' +
+            devices.map(d => {
+                const isStale = d.stale;
+                const dotColor = isStale ? 'var(--text-2)' : 'var(--green)';
+                const statusLabel = isStale ? '离线' : '在线';
+                const name = d.displayName || d.deviceId || 'Unknown';
+                const dToday = d.today || {};
+                const dAllTime = d.allTime || {};
+                return '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);">' +
+                    '<span style="width:8px;height:8px;border-radius:50%;background:' + dotColor + ';flex-shrink:0;"></span>' +
+                    '<span style="flex:1;font-weight:500;color:var(--text-0);">' + escHtml(name) + '</span>' +
+                    '<span style="font-size:0.8rem;color:var(--text-2);">今日 ' + formatTokens(dToday.totalTokens || 0) + '</span>' +
+                    '<span style="font-size:0.8rem;color:var(--text-1);font-family:var(--mono);">总计 ' + formatTokens(dAllTime.totalTokens || 0) + '</span>' +
+                    '<span style="font-size:0.75rem;color:var(--text-2);">(' + statusLabel + ')</span>' +
+                    '</div>';
+            }).join('') + '</div>';
     }
+
+    // Model chart
+    renderHubModelChart(stats);
 }
 
-/** Render model usage chart using Chart.js */
-function renderHubModelChart(data) {
+/** Render model usage bar chart using Chart.js */
+function renderHubModelChart(stats) {
     const canvas = document.getElementById('hub-model-chart');
     if (!canvas) return;
-    const models = data.model_usage || [];
-    if (models.length === 0) {
+
+    // Aggregate byModel across all devices
+    const modelTotals = {};
+    const devices = stats.devices || [];
+    for (const d of devices) {
+        const allTime = d.allTime || d.periods?.allTime;
+        if (allTime?.byModel) {
+            for (const [model, dim] of Object.entries(allTime.byModel)) {
+                modelTotals[model] = (modelTotals[model] || 0) + (dim.tokens || 0);
+            }
+        }
+    }
+
+    const labels = Object.keys(modelTotals).slice(0, 8);
+    const values = labels.map(m => modelTotals[m]);
+    if (labels.length === 0) {
         const ctx = canvas.getContext('2d');
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         return;
     }
 
-    if (canvas.__chart) {
-        canvas.__chart.destroy();
-    }
+    if (window.__hubChart) { window.__hubChart.destroy(); }
+    const colors = ['#34d399','#60a5fa','#fbbf24','#f87171','#a78bfa','#fb923c','#22d3ee','#e879f9'];
 
-    const labels = models.map(m => m.model || m.name || 'unknown');
-    const values = models.map(m => Number(m.tokens) || 0);
-    const colors = ['#FF6B6B', '#4ECDC4', '#FFE66D', '#A8E6CF', '#FF8B94', '#95E1D3', '#F38181', '#AA96DA'];
-
-    canvas.__chart = new Chart(canvas.getContext('2d'), {
-        type: 'doughnut',
+    window.__hubChart = new Chart(canvas.getContext('2d'), {
+        type: 'bar',
         data: {
             labels: labels,
             datasets: [{
+                label: 'Tokens',
                 data: values,
                 backgroundColor: colors.slice(0, labels.length),
-                borderWidth: 1,
-                borderColor: 'var(--bg-0)'
+                borderRadius: 4
             }]
         },
         options: {
             responsive: true,
-            maintainAspectRatio: true,
-            plugins: {
-                legend: {
-                    position: 'right',
-                    labels: {
-                        color: 'var(--text-1)',
-                        font: { size: 12 },
-                        padding: 12
-                    }
-                },
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                            const pct = total > 0 ? ((context.parsed / total) * 100).toFixed(1) : 0;
-                            return context.label + ': ' + formatTokens(context.parsed) + ' (' + pct + '%)';
-                        }
-                    }
-                }
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                y: { beginAtZero: true, ticks: { callback: v => formatTokens(v) } }
             }
         }
     });
 }
 
-/** Format token counts with K/M/B suffixes */
-function formatTokens(count) {
-    const n = Number(count);
-    if (!Number.isFinite(n)) return '0';
-    if (n >= 1000000000) return (n / 1000000000).toFixed(2) + 'B';
-    if (n >= 1000000) return (n / 1000000).toFixed(2) + 'M';
+/** Format large numbers with K/M suffix */
+function formatTokens(n) {
+    n = Number(n);
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
     if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
-    return n.toFixed(0);
+    return String(n);
 }
 
 // Quota fetching and rendering

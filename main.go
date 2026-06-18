@@ -128,12 +128,7 @@ func runCLI(args []string) error {
 		return cmdClaudeDesktopEnv(args[1:])
 
 	case "hub":
-		if err := cmdHub(args[1:]); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
-		}
-
-	return nil
+		return cmdHub(args[1:])
 	case "key":
 		return cmdKey(args[1:])
 	case "version":
