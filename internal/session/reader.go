@@ -251,6 +251,12 @@ func parseSessionEvents(filePath, sessionID string) (*SessionDetailResponse, err
 					CacheCreateTokens: raw.Message.Usage.CacheCreateTokens,
 				}
 			}
+			// 提取文本和工具名
+			if len(raw.Message.Content) > 0 {
+				text, tools := extractContent(raw.Message.Content)
+				evt.Message.Text = text
+				evt.Message.Tools = tools
+			}
 		}
 		events = append(events, evt)
 	}
@@ -263,4 +269,43 @@ func parseSessionEvents(filePath, sessionID string) (*SessionDetailResponse, err
 		SessionID: sessionID,
 		Events:    events,
 	}, nil
+}
+
+// contentPart JSONL message.content 中的单个元素
+type contentPart struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+	Name string `json:"name,omitempty"`
+}
+
+// extractContent 从 raw JSON 中提取文本内容和工具名
+func extractContent(raw json.RawMessage) (text string, tools []string) {
+	// 尝试解析为字符串
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s, nil
+	}
+
+	// 尝试解析为 content 数组
+	var parts []contentPart
+	if err := json.Unmarshal(raw, &parts); err != nil {
+		return "", nil
+	}
+
+	var texts []string
+	for _, p := range parts {
+		switch p.Type {
+		case "text":
+			if p.Text != "" {
+				texts = append(texts, p.Text)
+			}
+		case "tool_use":
+			if p.Name != "" {
+				tools = append(tools, p.Name)
+			}
+		// thinking / tool_result 等跳过
+		}
+	}
+	text = strings.Join(texts, "\n")
+	return
 }

@@ -1,5 +1,7 @@
 package session
 
+import "encoding/json"
+
 // ClaudeCodeEvent 映射 Claude Code JSONL 单行事件
 type ClaudeCodeEvent struct {
 	Type      string          `json:"type"`
@@ -10,9 +12,10 @@ type ClaudeCodeEvent struct {
 }
 
 type claudeMessage struct {
-	ID    string       `json:"id"`
-	Model string       `json:"model"`
-	Usage *claudeUsage `json:"usage,omitempty"`
+	ID      string           `json:"id"`
+	Model   string           `json:"model"`
+	Usage   *claudeUsage     `json:"usage,omitempty"`
+	Content json.RawMessage  `json:"content,omitempty"`
 }
 
 type claudeUsage struct {
@@ -55,6 +58,8 @@ type EventMessage struct {
 	ID    string      `json:"id"`
 	Model string      `json:"model"`
 	Usage *EventUsage `json:"usage,omitempty"`
+	Text  string      `json:"text,omitempty"`  // 用户消息文本 / assistant 文本
+	Tools []string    `json:"tools,omitempty"` // assistant 用到的工具
 }
 
 // EventUsage 会话事件中的 token 用量

@@ -479,6 +479,7 @@ const i18n = {
         sessions_sort_tokens_desc: "Token 最多",
         sessions_sort_tokens_asc: "Token 最少",
         sessions_sort_cost_desc: "费用最高",
+        sessions_show_content: "内容",
         sessions_model_chart: "模型分布",
         title_hub: "多设备同步",
         subtitle_hub: "跨设备 Hub 配置同步与状态监控",
@@ -850,6 +851,7 @@ const i18n = {
         sessions_sort_tokens_desc: "Most Tokens",
         sessions_sort_tokens_asc: "Fewest Tokens",
         sessions_sort_cost_desc: "Highest Cost",
+        sessions_show_content: "Content",
         sessions_model_chart: "Model Distribution",
         title_hub: "Multi-Device Sync",
         subtitle_hub: "Cross-device usage statistics aggregation",
@@ -3958,6 +3960,16 @@ function setupSessionsControls() {
         });
     }
 
+    // 内容显示切换
+    const contentToggle = document.getElementById('sessions-content-toggle');
+    if (contentToggle) {
+        const saved = localStorage.getItem('sessions_show_content');
+        if (saved === 'true') contentToggle.checked = true;
+        contentToggle.addEventListener('change', () => {
+            localStorage.setItem('sessions_show_content', contentToggle.checked);
+        });
+    }
+
     // Close session detail modal
     const closeBtn = document.getElementById('sessionDetailClose');
     const overlay = document.getElementById('sessionDetailOverlay');
@@ -4192,6 +4204,8 @@ async function openSessionDetail(sessionId) {
 /** 渲染会话详情 */
 function renderSessionDetail(data, container) {
     const events = data.events || [];
+    const showContent = document.getElementById('sessions-content-toggle')?.checked || false;
+
     let html = '<div class="session-detail-exchanges">';
     let currentExchange = null;
     let hasContent = false;
@@ -4199,10 +4213,13 @@ function renderSessionDetail(data, container) {
     for (const evt of events) {
         if (evt.type === 'user') {
             if (currentExchange) html += currentExchange;
+            const text = showContent && evt.message?.text ? evt.message.text : '';
+            const preview = text ? '：' + escHtml(text.slice(0, 100)) : '';
             currentExchange = '<div class="sd-exchange">' +
                 '<div class="sd-exchange-head" onclick="toggleExchange(this)">' +
                 '<span class="sd-chevron">▶</span>' +
                 '<span class="sd-role-badge sd-role-user">你</span>' +
+                (preview ? '<span class="sd-preview">' + preview + '</span>' : '') +
                 '<span class="sd-exchange-time">' + formatEventTime(evt.timestamp) + '</span>' +
                 '</div>' +
                 '<div class="sd-exchange-body" style="display:none;">';
@@ -4212,12 +4229,13 @@ function renderSessionDetail(data, container) {
             const inTok = usage.input_tokens || 0;
             const outTok = usage.output_tokens || 0;
             const model = evt.message?.model || '';
+            const tools = showContent && evt.message?.tools?.length ? ' ⊧ ' + evt.message.tools.join(' ') : '';
             currentExchange += '<div class="sd-turn">' +
                 '<div class="sd-turn-header">' +
                 '<span class="sd-role-badge sd-role-ai">AI</span>' +
                 '<span class="sd-turn-model">' + escHtml(model) + '</span>' +
                 '</div>' +
-                '<div class="sd-turn-tokens">↘ ' + inTok + ' · ↗ ' + outTok + '</div>' +
+                '<div class="sd-turn-tokens">↘ ' + inTok + ' · ↗ ' + outTok + (tools ? ' · ' + tools : '') + '</div>' +
                 '</div>';
         }
     }

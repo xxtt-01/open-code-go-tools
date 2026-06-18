@@ -2852,6 +2852,53 @@ html[data-theme="dark"] .td-chart-body canvas { filter:invert(0); }
     border-color: var(--accent);
 }
 
+/* 内容显示开关 */
+.s-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    user-select: none;
+    flex-shrink: 0;
+}
+.s-toggle input {
+    display: none;
+}
+.s-toggle-track {
+    width: 30px;
+    height: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    position: relative;
+    transition: all 0.2s;
+}
+.s-toggle-track::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--text-2);
+    transition: all 0.2s;
+}
+.s-toggle input:checked + .s-toggle-track {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+}
+.s-toggle input:checked + .s-toggle-track::after {
+    left: 16px;
+    background: var(--accent);
+}
+.s-toggle-label {
+    font-size: 11px;
+    color: var(--text-2);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
 /* ═══════════════════════════════════════
    SESSIONS — 模型分布图（可折叠）
    ═══════════════════════════════════════ */
@@ -3074,6 +3121,16 @@ html[data-theme="dark"] .td-chart-body canvas { filter:invert(0); }
     font-size: 11px;
     color: var(--text-2);
     margin-left: auto;
+    flex-shrink: 0;
+}
+.sd-preview {
+    font-size: 11px;
+    color: var(--text-1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    flex: 1;
 }
 .sd-exchange-body {
     padding: 8px 14px 14px 36px;
