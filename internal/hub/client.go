@@ -181,6 +181,9 @@ func (c *Client) pushOnce() {
 // listenSSE 监听 Hub 的 SSE 流以接收远程设备统计。
 // 断线后自动等待 5 秒重连。
 func (c *Client) listenSSE() {
+	// 使用独立的 HTTP 客户端（SSE 需要长连接，不能有超时限制）
+	sseClient := &http.Client{}
+
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -203,7 +206,7 @@ func (c *Client) listenSSE() {
 			req.Header.Set("Authorization", "Bearer "+c.config.Secret)
 		}
 
-		resp, err := c.httpClient.Do(req)
+		resp, err := sseClient.Do(req)
 		if err != nil {
 			c.logger.Printf("sse: connect: %v, retry in 5s", err)
 			select {
@@ -263,7 +266,9 @@ func loadOrCreateDeviceID(dataDir string) string {
 	// 生成新设备 ID
 	id := generateDeviceID()
 	if err := os.MkdirAll(dataDir, 0o700); err == nil {
-		os.WriteFile(path, []byte(id+"\n"), 0o600)
+		if err := os.WriteFile(path, []byte(id+"\n"), 0o600); err != nil {
+			log.Printf("[hub] 写入设备 ID 文件失败: %v (将在下次启动时重新生成)", err)
+		}
 	}
 	return id
 }
