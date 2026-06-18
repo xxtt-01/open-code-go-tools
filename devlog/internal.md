@@ -252,3 +252,16 @@
   - 默认推送间隔 120 秒，启用同步时校验范围 30-1800 秒
   - 无侵入增量修改，所有现有代码保持不变
 - **影响范围:** `internal/preferences` 包
+
+## 2026-06-18 11:10: [hub] 同步计数器数据结构与实现
+- **文件:**
+  - `internal/hub/types.go` — 全部同步数据结构定义
+  - `internal/hub/counters.go` — 内存计数器实现 + 快照持久化
+- **原因:** 实现 Hub 跨设备同步功能的内核模块，提供按 model/route/client 三维累加的统计计数器
+- **决策:**
+  - types.go 定义 Config/SyncPayload/PeriodStats/DimStats/HubStore/DeviceRecord 六大结构体
+  - counters.go 实现 SyncCounters，自动感知日期/月份变更重置对应时间段
+  - allTime 和 month 持久化到 ~/.ocgt/hub_counters.json，进程重启恢复；today 每次启动重新开始
+  - 内置简化版价格估算（deepseek-v4-flash/pro、claude-sonnet-4-7、kimi、qwen），避免跨包循环依赖
+  - 原子写入快照防止崩溃损坏
+- **影响范围:** `internal/hub` 新包
