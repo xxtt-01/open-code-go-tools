@@ -26,3 +26,8 @@
   3. `GET /api/devices` 中 `online` 字段替换为 `stale`（与 Go Server 一致）
 - **影响范围:** Worker SSE 推送格式、设备统计逻辑、设备列表 API 响应
 - **踩坑:** `sseFormat` 函数保留不动，其他 SSE 场景可能仍会用到
+
+## 2026-06-18 14:30: Worker getStats 增加 updatedAt 和设备统计数据字段
+- **文件:** `worker/src/index.js`
+- **原因:** Worker 的 getStats 返回的设备列表缺少 today/month/allTime 数据，与 Go Server 响应结构不一致，前端无法显示设备级用量
+- **影响范围:** Worker /api/stats 和 SSE 响应结构

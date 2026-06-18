@@ -314,3 +314,8 @@
 - **文件:** `internal/hub/server.go`
 - **原因:** storePath 字面含义是文件路径，实际存储的是目录，命名误导
 - **影响范围:** 仅字段重命名，无功能变化
+
+## 2026-06-18 14:30: main.go cmdHub Addr/Start 调用顺序修复
+- **文件:** `main.go`
+- **原因:** Addr() 在 Start() 之前调用，返回 nil listener
+- **影响范围:** 独立 Hub 模式启动日志
