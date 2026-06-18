@@ -13,6 +13,7 @@
   - `internal/preferences/preferences.go` — IsValidView 添加 "sessions"
 - **原因:** 前端增强需要后端 API 支持
 - **影响范围:** internal/ 下 5 个文件
+  - **后续修复:** apiSessions 增加 sessionID 路径遍历校验 (`strings.ContainsAny(sessionID, "/\\")`)
 
 ## 2026-06-02 11:20: 修复 Token 监控 Bug — Messages 端点 Token 记录为 0
 - **文件:** `internal/proxy/handler.go`

@@ -1657,6 +1657,10 @@ func (s *Server) apiSessions(w http.ResponseWriter, r *http.Request) {
 
 	// 如果指定了 id 参数，返回会话详情
 	if sessionID := r.URL.Query().Get("id"); sessionID != "" {
+		if strings.ContainsAny(sessionID, "/\\") {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("invalid session id"))
+			return
+		}
 		detail, err := session.ReadSessionEvents(projectsRoot, sessionID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
