@@ -176,15 +176,11 @@ export class HubDO {
   async getStats() {
     const devices = await this.listDevices();
     const now = Date.now();
-    const filtered = devices.filter(d => {
-      if (!this.staleAfterMs) return true;
-      const t = new Date(d.receivedAt || d.updatedAt).getTime();
-      return (now - t) < this.staleAfterMs;
-    });
 
-    const result = aggregateDevices(filtered);
+    // 所有设备参与汇总（不过滤离线设备）
+    const result = aggregateDevices(devices);
     // 附加上下文
-    result.devices = filtered.map(d => ({
+    result.devices = devices.map(d => ({
       deviceId: d.deviceId,
       displayName: d.displayName,
       hostname: d.hostname,
@@ -192,7 +188,7 @@ export class HubDO {
       version: d.version,
       updatedAt: d.updatedAt,
       receivedAt: d.receivedAt,
-      online: !this.staleAfterMs || (now - new Date(d.receivedAt || d.updatedAt).getTime()) < this.staleAfterMs
+      stale: this.staleAfterMs > 0 && (now - new Date(d.receivedAt || d.updatedAt).getTime()) > this.staleAfterMs,
     }));
 
     return result;
@@ -224,9 +220,7 @@ export class HubDO {
   async broadcast(reason = 'update') {
     if (this.sseClients.size === 0) return;
     const stats = await this.getStats();
-    const payload = this.encoder.encode(sseFormat('stats', {
-      type: 'stats', reason, stats, at: new Date().toISOString()
-    }));
+    const payload = this.encoder.encode(`data: ${JSON.stringify(stats)}\n\n`);
     for (const writer of this.sseClients) {
       writer.write(payload).catch(() => this.dropClient(writer));
     }
@@ -278,7 +272,7 @@ export class HubDO {
         version: d.version,
         updatedAt: d.updatedAt,
         receivedAt: d.receivedAt,
-        online: !this.staleAfterMs || (now - new Date(d.receivedAt || d.updatedAt).getTime()) < this.staleAfterMs,
+        stale: this.staleAfterMs > 0 && (now - new Date(d.receivedAt || d.updatedAt).getTime()) > this.staleAfterMs,
         today: d.today || null,
         month: d.month || null,
         allTime: d.allTime || null
@@ -291,9 +285,7 @@ export class HubDO {
       const stats = await this.getStats();
       const { readable, writable } = new TransformStream();
       const writer = writable.getWriter();
-      writer.write(this.encoder.encode(sseFormat('snapshot', {
-        type: 'stats', reason: 'snapshot', stats, at: new Date().toISOString()
-      }))).catch(() => {});
+      writer.write(this.encoder.encode(`data: ${JSON.stringify(stats)}\n\n`))).catch(() => {});
       this.sseClients.add(writer);
       this.ensureHeartbeat();
       request.signal.addEventListener('abort', () => this.dropClient(writer));
