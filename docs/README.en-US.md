@@ -1,70 +1,137 @@
-# ocgt - Claude Code Native GUI Control Panel & Proxy
+# ocgt - Claude Code Desktop Client & Local Proxy
+
+
 
 > 🌐 **[简体中文版 (Chinese Version)](../README.md)**
 
-`ocgt` (OpenCode Go Tools) is a native desktop control center custom-built for **Claude Code** and the **OpenCode Go** (opencode.ai) subscription service. It integrates an ultra-low latency local compatibility proxy (converting Anthropic-format requests to OpenAI Chat Completions protocol) and provides a clean, intuitive native GUI control panel with **one-click English/Chinese switching**. Current version v2.0.4.
 
-Developers do not need to manually configure tedious environment variables or modify system hosts in the command line. Simply double-click to open the client, and the agent environment will be automatically hosted with one-click terminal invocation.
+
+`ocgt` (OpenCode Go Tools) is a desktop app for Claude Code. Two things at its core: a local proxy that handles Anthropic ↔ OpenAI protocol conversion, and a GUI panel for managing your API Key, monitoring traffic, and launching terminals. Supports Chinese and English. Current version v2.2.1.
+
+
+
+No need to mess with environment variables or edit system hosts. Open the app, paste your API Key, pick a model, and you're coding.
 
 ---
 
 ## 🖥️ Core Features & Showcases
 
 ### 📊 System Status Dashboard
+
 ![System Status](../assets/2026-05-30_213807.png)
-* **Real-time Monitoring**: Monitor local proxy listening ports (default `127.0.0.1:8787`) and upstream API node status.
-* **Quick Access**: Visualize local configuration file paths and open the configuration directory with one click.
+
+* **Real-time Monitoring**: Check proxy listening ports (default `127.0.0.1:8787`), upstream API status, and API Key configuration.
+
+* **Quick Access**: See config file paths and open the directory in one click.
+
+
 
 ### ⚙️ Configuration Management
+
 ![Configuration Settings](../assets/2026-05-30_213821.png)
-* **Optimized for OpenCode Go**: Enter your API Key and hit save to apply hot-reloaded configurations in seconds.
-* **Model Alias Mapping**: Custom-map Claude Sonnet, Haiku, and Opus models to upstream alternatives seamlessly.
-* **Reasoning Intensity**: Provide fixed Reasoning (Thinking) Budget settings (Fast, Slow, Deep, Geek, Off) to eliminate configuration mistakes.
 
-### 💻 One-Click Terminal Activation
+* **Hot Reload**: Enter your API Key and save — changes take effect immediately, no restart needed.
+
+* **Model Mapping**: Map Claude Sonnet / Haiku / Opus to whichever upstream models you want.
+
+* **Reasoning Intensity**: Fast / Slow / Deep / Geek / Off — fixed thinking budget settings.
+
+* **Same-model Retry**: 5 exponential backoff retries + 30s circuit breaker.
+
+
+
+### 💻 Quick Connect
+
 ![Terminal Activation](../assets/2026-05-30_213831.png)
-* **Automatic Injection**: Select your preferred console type (PowerShell / Bash / CMD) and click **"Launch Pre-configured Terminal"** to spawn a native shell session with all proxy variables injected.
-* **Instant Coding**: Directly type `claude` and press Enter to start your AI coding session!
-* **External Integration**: Provide quick environment variables and CC Switch JSON configurations for existing terminal sessions or IDE windows.
 
-### 📡 Traffic Logs
-* **Real-time Capture**: Real-time capture and visualization of API request logs, latency, methods, and status codes originating from the Claude Code client, summarized with success rates and average response latency.
+* **One-click Terminal**: Pick a shell (PowerShell / Bash / CMD) and launch it with all proxy env vars injected.
+
+* **Client Integration**: Four options — CLI (global settings.json), VS Code, Claude Code settings, Claude Desktop App (3P Profile).
+
+* **One-click Repair**: Fix all configured integrations at once.
+
+
+
+### 📡 Traffic Stats
+
+* Token count / requests / success rate / average latency, with auto-adapting hour/day/week granularity.
+
+* **Traffic Details** (Ctrl+5): Full-field table with 3-axis filtering (time + model + status), pagination, CSV export.
+
+
+
+### 📊 Quota Dashboard
+
+* Rolling / Weekly / Monthly quota progress bars.
+
+* Auto-refresh every 5 seconds, or refresh manually.
+
+
+
+### 🧩 Companion Tool — [ocgt-monitor](https://github.com/xxtt-01/ocgt-monitor)
+
+* Standalone terminal monitor for ocgt proxy request logs.
+
+* Color-coded output with filtering and stats.
+
+* Pairs well with ocgt GUI for full-screen terminal workflows.
+
+
+
+### 🎨 Preferences
+
+* Theme: Light / Dark / System · 5 presets + custom hue slider.
+
+* Language: 中文 / English.
+
+* Window close: Ask every time / Minimize to tray / Quit.
 
 ---
 
-## 🚦 Three-Step Quick Start
+## 🚦 Quick Start
 
-1. **Download & Launch**: Go to [Releases](../../releases) to download the latest native executable for your system and double-click to run.
-2. **Save Settings**: In the **"Configuration"** page, fill in your **OpenCode Go API Key**, choose a default model and reasoning strength, and click **"Save & Hot-Reload"**.
-3. **Launch Terminal**: Under the **"Terminal"** tab, select your shell, click **"Launch Pre-configured Terminal"**, and type:
+
+
+1. **Download**: Grab the latest build from [Releases](../../releases) for your OS.
+
+2. **Configure**: Open the **Configuration** page (Ctrl+2) → enter your **API Key** → pick a model → save.
+
+3. **Launch**: Go to **Quick Connect** (Ctrl+3) → choose a shell → click **Launch** → type:
+
    ```bash
+
    claude
+
    ```
 
-*(Note: You only need to choose and start one shell type, no need to configure all of them.)*
-
 ---
 
-## 📁 Configurations & Hot Reload
+## 📁 Configuration & Hot Reload
 
-Configuration preferences are persisted locally:
+
+
+Config is stored locally:
+
 ```text
+
 %USERPROFILE%\.ocgt\config.json
+
 ```
-Thanks to the background **Hot Reload** mechanism, manually editing this JSON file externally will automatically reload the configuration in the local proxy server within 2.5 seconds without needing a client restart.
+
+Edit this file externally and the proxy picks up changes automatically within ~3 seconds — no restart needed.
 
 ---
 
-## 💻 Advanced CLI Reference
-
-Although using the visual GUI is highly recommended, `ocgt` also provides basic CLI options for command-line convenience:
-
-```powershell
-ocgt init       # Initialize the default configuration file
-ocgt serve      # Run the local proxy silently in the background
-ocgt claude-env # Print proxy env variables for the current active profile
-ocgt ccswitch   # Output provider JSON for import into CC Switch routers
-ocgt version    # Print the current running version
+## 💻 CLI Reference
+
+Prefer the GUI? Skip this. But `ocgt` also has CLI commands:
+
+```powershell
+ocgt init       # Create default config
+ocgt serve      # Run proxy in the background
+ocgt claude-env # Print current profile env vars
+ocgt ccswitch   # Output CC Switch provider JSON
+ocgt version    # Show version
 ```
 
 ---
