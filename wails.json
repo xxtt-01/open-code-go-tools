@@ -1,7 +1,7 @@
 {
   "$schema": "https://wails.io/schemas/config.v2.json",
   "name": "ocgt",
-  "outputfilename": "ocgt_v2.1.0",
+  "outputfilename": "ocgt",
   "frontend:dir": "frontend",
   "wailsjsdir": "./frontend/src",
   "author": {

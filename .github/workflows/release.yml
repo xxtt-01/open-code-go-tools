@@ -93,19 +93,23 @@ jobs:
           cd dist
           sha256sum * > checksums.txt
 
+      - name: Extract release notes from RELEASE_NOTES.md
+        id: notes
+        run: |
+          # Extract the latest version section (everything from the first version
+          # heading to the "历史版本 / Previous Releases" marker)
+          awk '
+            /^# .+ocgt v[0-9]/ && !started { started=1 }
+            started && (/Previous Releases/ || /历史版本/) { exit }
+            started { print }
+          ' RELEASE_NOTES.md > release_body.md
+          echo "Extracted $(wc -l < release_body.md) lines"
+
       - name: Create GitHub Release and Upload Assets
         uses: softprops/action-gh-release@v2
         with:
           name: ocgt ${{ github.ref_name }} GUI
-          body: |
-            ocgt ${{ github.ref_name }} 版本说明
-
-            更新日志 (Changelog):
-
-            - **修复鉴权头回归（严重）**：v2.0.4 的 `applyAnthropicAuth` 会无条件删除上游请求的 `Authorization: Bearer` 头、仅保留 `X-Api-Key`，导致默认上游 `opencode.ai/zen/go`（依赖 Bearer 认证）返回 401，所有 `/v1/models`、`/v1/messages`、`/v1/messages/count_tokens`、`/v1/chat/completions` 请求均受影响
-            - **新增配置驱动的鉴权方式**：`Profile` 增加 `auth_mode` 字段（`bearer`（默认）/ `x-api-key` / `both`），`applyAnthropicAuth` 按配置选择鉴权头策略，彻底解决一刀切问题。默认 `bearer` 保持对 OpenAI 兼容网关向后兼容，老配置零迁移
-            - 参考了 fuergaosi233/claude-code-proxy、Calcium-Ion/new-api、LiteLLM 等业界项目的鉴权头处理方案
-            详细信息见 [RELEASE_NOTES.md](https://github.com/${{ github.repository }}/blob/main/RELEASE_NOTES.md)
+          body_path: release_body.md
           files: |
             dist/*
           generate_release_notes: false

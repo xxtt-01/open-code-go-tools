@@ -1217,6 +1217,20 @@ func (a *App) FetchQuota() map[string]any {
 	}
 }
 
+// FetchUpstreamModels fetches the upstream model list through the proxy server
+// (no CORS, carries the configured API key for the active profile).
+// Returns {"success": true, "data": <normalized models>} or {"success": false, "error": "..."}.
+func (a *App) FetchUpstreamModels() map[string]any {
+	if a.srv == nil {
+		return map[string]any{"success": false, "error": "proxy server not started"}
+	}
+	data, err := a.srv.FetchUpstreamModels(context.Background())
+	if err != nil {
+		return map[string]any{"success": false, "error": err.Error()}
+	}
+	return map[string]any{"success": true, "data": data}
+}
+
 // resolveQuotaCredentials resolves quota credentials from config or env vars.
 // Priority: Profile.QuotaCookie/QuotaWorkspaceID → env vars.
 func (a *App) resolveQuotaCredentials() (cookie, workspaceID string) {

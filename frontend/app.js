@@ -1034,9 +1034,11 @@ function cacheDom() {
                 syncModelsBtn.disabled = true;
                 const oldText = syncModelsBtn.textContent;
                 syncModelsBtn.textContent = '...';
-                const res = await fetch(`https://opencode.ai/zen/go/v1/models`);
-                if (!res.ok) throw new Error('API failed');
-                const data = await res.json();
+                const result = await window['go']['main']['App']['FetchUpstreamModels']();
+                if (!result || !result.success) {
+                    throw new Error(result && result.error ? result.error : 'API failed');
+                }
+                const data = result.data;
                 if (data && data.data && Array.isArray(data.data)) {
                     const newModels = data.data.map(m => ({
                         id: m.id,
@@ -1057,11 +1059,13 @@ function cacheDom() {
                     }
                     localStorage.setItem('synced_models', JSON.stringify(syncedToSave));
                     populateModelSelects();
-                    showToast(`同步成功，新增 ${added} 个模型`);
+                    toast(`同步成功，新增 ${added} 个模型`);
+                } else {
+                    toast('上游返回的数据格式异常', 'error');
                 }
             } catch (err) {
                 console.error(err);
-                showToast('获取模型失败，请检查上游 API Key 与网络连接', 'error');
+                toast('获取模型失败：' + (err && err.message ? err.message : '请检查 API Key 与网络连接'), 'error');
             } finally {
                 syncModelsBtn.disabled = false;
                 syncModelsBtn.textContent = t('btn_sync_models');

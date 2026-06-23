@@ -1,3 +1,13 @@
+## 2026-06-19 19:30: 新增 FetchUpstreamModels — 后端代理上游模型列表
+- **文件:**
+  - `internal/proxy/handler.go` — 新增 `func (s *Server) FetchUpstreamModels(ctx) (map[string]any, error)`，复用 `newUpstreamRequest + applyAnthropicAuth + clientSnapshot + normalizeModels` 全链路
+  - `app.go` — 新增 Wails binding `func (a *App) FetchUpstreamModels() map[string]any`
+  - `internal/version/version.go` — Version: 2.2.0 → 2.2.1
+  - `wails.json` — productVersion: 2.1.0 → 2.2.1
+- **根因:** 前端无法直接 fetch 外部域名（CORS），需要后端代理。proxy 已有 `s.models` handler 完整逻辑，抽出不依赖 `http.Request` 的版本供 Wails binding 调用
+- **决策:** 按 active profile 请求上游 `/v1/models`，自动带 `auth_mode` 配置的鉴权头。返回 `normalizeModels` 后的结构，前端无需 `JSON.parse`
+- **Issue:** [#7](https://github.com/ethan-blue/open-code-go-tools/issues/7)
+
 ## 2026-06-02 11:20: 修复 Token 监控 Bug — 流式 InputTokens 使用估算值
 - **文件:** `internal/proxy/streamer.go`, `internal/proxy/handler.go`
 - **根因:** `streamOpenAIAsAnthropic` 签名 `func ... (outputTokens int)`，内部解析到上游真实 `PromptTokens` 但丢弃了，历史记录使用字符级估算值

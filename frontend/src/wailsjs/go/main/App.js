@@ -18,6 +18,10 @@ export function FetchQuota() {
   return window['go']['main']['App']['FetchQuota']();
 }
 
+export function FetchUpstreamModels() {
+  return window['go']['main']['App']['FetchUpstreamModels']();
+}
+
 export function GetHubConfig() {
   return window['go']['main']['App']['GetHubConfig']();
 }

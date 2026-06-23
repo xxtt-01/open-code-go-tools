@@ -349,6 +349,38 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, normalizeModels(body, profile))
 }
 
+// FetchUpstreamModels fetches the /v1/models list from the active upstream profile.
+// It reuses the same auth + client logic as the /v1/models proxy route but does not
+// require an http.Request, so it can be called from Wails bindings (no CORS issues)
+// and automatically carries the configured API key for the active profile.
+// Returns the normalized models map (same shape produced by normalizeModels).
+func (s *Server) FetchUpstreamModels(ctx context.Context) (map[string]any, error) {
+	s.configMu.RLock()
+	profile, _, err := s.config.Profile("")
+	s.configMu.RUnlock()
+	if err != nil {
+		return nil, err
+	}
+	req, err := s.newUpstreamRequest(ctx, http.MethodGet, "/v1/models", nil, profile)
+	if err != nil {
+		return nil, err
+	}
+	applyAnthropicAuth(req, profile)
+	resp, err := s.clientSnapshot().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("upstream returned status %d: %s", resp.StatusCode, string(body))
+	}
+	return normalizeModels(body, profile), nil
+}
+
 func (s *Server) countTokens(w http.ResponseWriter, r *http.Request) {
 	data, err := io.ReadAll(io.LimitReader(r.Body, MaxBodySize+1))
 	if err != nil {

@@ -9,6 +9,8 @@ export function ClearSystemEnv():Promise<string>;
 
 export function FetchQuota():Promise<Record<string, any>>;
 
+export function FetchUpstreamModels():Promise<Record<string, any>>;
+
 export function GetHubConfig():Promise<string>;
 
 export function GetHubStatus():Promise<string>;

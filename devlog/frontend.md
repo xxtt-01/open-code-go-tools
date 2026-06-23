@@ -1,3 +1,12 @@
+## 2026-06-19 19:30: 修复"同步上游模型"功能完全失效 — 前端
+- **文件:**
+  - `frontend/app.js` — 同步按钮 handler：裸 `fetch(opencode.ai)` → 调 Wails binding `FetchUpstreamModels()`；`showToast()` → `toast()`；`APP_VERSION` v2.2.0 → v2.2.1
+  - `frontend/src/wailsjs/go/main/App.d.ts` — 新增 `FetchUpstreamModels()` 类型声明
+  - `frontend/src/wailsjs/go/main/App.js` — 新增 `FetchUpstreamModels()` 绑定导出
+- **根因:** ① Wails webview origin `wails://wails` 直接 fetch 外部域名触发 CORS；② 调了不存在的 `showToast`（实际是 `toast`），ReferenceError 崩溃
+- **决策:** 前端调 Go Wails binding，由后端 `http.Client` 发请求（无 CORS、自动带 API Key）。参考 CC Switch (Tauri) 通过 `invoke()` 调 Rust `reqwest` 的同类方案
+- **Issue:** [#7](https://github.com/ethan-blue/open-code-go-tools/issues/7)
+
 ## 2026-06-02 11:20: 新增 OpenCode Go 套餐额度监控 — 前端
 - **文件:**
   - `frontend/app.js` — 前端获取/渲染额度

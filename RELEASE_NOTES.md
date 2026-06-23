@@ -1,11 +1,37 @@
 # Release Notes
 
-## 🌐 语言选择 / Language
-* [简体中文 (Simplified Chinese)](#-ocgt-v205---v205-)
-* [English](#-ocgt-v205---release-notes)
-
----
-
+## 🌐 语言选择 / Language
+* [简体中文 (Simplified Chinese)](#-ocgt-v221---v221-)
+* [English](#-ocgt-v221---release-notes)
+
+---
+
+# 🇨🇳 ocgt v2.2.1
+
+## 修复
+
+- **修复"同步上游模型"功能完全失效（严重）**：点击"同步上游模型"按钮无任何输出、模型列表不更新。根因有两个：
+  1. **CORS 跨域拦截**：前端直接 `fetch('https://opencode.ai/zen/go/v1/models')`，Wails webview origin 为 `wails://wails`，被浏览器同源策略拦截（`Access-Control-Allow-Origin`）。改为前端调用 Go Wails binding `FetchUpstreamModels()`，由后端 `http.Client` 发请求——原生进程无 CORS 限制，且自动携带 active profile 配置的 API Key
+  2. **`showToast` 函数未定义**：前端只定义了 `toast(message, type, options)`，不存在 `showToast`，调用即 `ReferenceError` 崩溃。已统一改为 `toast()`
+- **架构改进**：新增 `proxy.Server.FetchUpstreamModels(ctx)` 方法，复用 proxy 已有的 `newUpstreamRequest + applyAnthropicAuth + clientSnapshot + normalizeModels` 全链路逻辑（按 active profile 的 `auth_mode` 自动选择鉴权头），不重复造轮子
+- 参考了 [farion1231/cc-switch](https://github.com/farion1231/cc-switch)（CC Switch）的同类功能实现：其作为 Tauri 应用通过 `invoke()` 调 Rust 后端 `reqwest` 发请求，架构思路与本次修复一致——桌面应用的出网请求应在原生后端完成，而非 webview 前端
+- Fixes [#7](https://github.com/ethan-blue/open-code-go-tools/issues/7)
+
+---
+
+# 🇺🇸 ocgt v2.2.1 - Release Notes
+
+## Fixes
+
+- **Fixed "Sync Upstream Models" completely broken (critical)**: clicking the "Sync Upstream Models" button produced no output and the model list never updated. Two root causes:
+  1. **CORS blocked**: the frontend directly `fetch('https://opencode.ai/zen/go/v1/models')`. The Wails webview origin is `wails://wails`, which is blocked by the browser's same-origin policy. Fixed by calling the Go Wails binding `FetchUpstreamModels()` instead — the backend `http.Client` makes the request (no CORS in native processes) and automatically carries the active profile's API Key
+  2. **`showToast` undefined**: the frontend only defines `toast(message, type, options)`, not `showToast`, so the call threw a `ReferenceError` and crashed. Changed to `toast()`
+- **Architecture improvement**: added `proxy.Server.FetchUpstreamModels(ctx)` which reuses the proxy's existing `newUpstreamRequest + applyAnthropicAuth + clientSnapshot + normalizeModels` pipeline (auto-selects auth headers per the active profile's `auth_mode`) — no duplicated logic
+- Referenced [farion1231/cc-switch](https://github.com/farion1231/cc-switch) (CC Switch): as a Tauri app, it fetches models via `invoke()` → Rust `reqwest`, validating the same architectural principle — desktop apps should make outbound HTTP from the native backend, not the webview
+- Fixes [#7](https://github.com/ethan-blue/open-code-go-tools/issues/7)
+
+---
+
 # 🇨🇳 ocgt v2.0.5
 
 ## 修复
