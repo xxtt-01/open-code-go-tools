@@ -323,9 +323,10 @@
 - **决策:** 改为 `toggleChartEmpty()` 辅助函数，通过叠加 `.td-empty-state` 遮罩而非销毁 canvas；canvas 隐藏但保留在 DOM 中，数据恢复时取消隐藏即可正常渲染
 - **影响范围:** 流量仪表盘 3 个图表函数（renderTokenTrend/renderRequestTrend/renderModelDonut）和会话列表
 
-## 2026-06-23 16:00: v2.2.2 版本升级
+## 2026-06-23 16:00: v2.2.2 版本升级 + 编译
 - **文件:**
   - `frontend/app.js` — insertAdjacentHTML 替代 innerHTML += 避免重复解析
   - `internal/version/version.go` — v2.2.0 → v2.2.2
-  - `wails.json` — productVersion 2.1.0 → 2.2.2
-- **影响范围:** 版本号更新至 v2.2.2
+  - `wails.json` — productVersion 2.1.0 → 2.2.2；outputfilename ocgt → ocgt_v2.2.2
+  - `build/bin/ocgt_v2.2.2.exe` — Wails 编译产物（13MB）
+- **影响范围:** 版本号更新至 v2.2.2，三地远程已同步
