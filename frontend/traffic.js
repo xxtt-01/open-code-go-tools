@@ -129,6 +129,27 @@ function fmtDate(iso) {
   return (d.getMonth() + 1).toString().padStart(2, '0') + '/' + d.getDate().toString().padStart(2, '0');
 }
 
+// ── 图表空状态辅助函数（不销毁 canvas）──
+function toggleChartEmpty(canvas, show) {
+  if (!canvas) return;
+  const container = canvas.parentElement;
+  if (!container) return;
+  let emptyEl = container.querySelector('.td-empty-state');
+  if (show) {
+    canvas.style.display = 'none';
+    if (!emptyEl) {
+      emptyEl = document.createElement('div');
+      emptyEl.className = 'td-empty-state';
+      emptyEl.textContent = '暂无数据';
+      container.appendChild(emptyEl);
+    }
+    emptyEl.style.display = '';
+  } else {
+    canvas.style.display = '';
+    if (emptyEl) emptyEl.style.display = 'none';
+  }
+}
+
 // ── 趋势图标签格式化（自适应粒度）──
 function fmtTrendLabel(dateStr, granularity) {
   if (!dateStr) return '-';
@@ -216,10 +237,11 @@ function renderTokenTrend(daily, granularity) {
   const canvas = document.getElementById('chart-token-trend');
   if (!canvas) return;
   if (typeof Chart === 'undefined') return;
-  if (chartInstances.tokenTrend) chartInstances.tokenTrend.destroy();
+  if (chartInstances.tokenTrend) { chartInstances.tokenTrend.destroy(); chartInstances.tokenTrend = null; }
   if (!daily || daily.length === 0) {
-    canvas.parentElement.innerHTML = '<div class="td-empty">暂无数据</div>'; return;
+    toggleChartEmpty(canvas, true); return;
   }
+  toggleChartEmpty(canvas, false);
 
   const labels = daily.map(d => fmtTrendLabel(d.date, granularity));
   const datasets = [
@@ -246,10 +268,11 @@ function renderRequestTrend(daily, granularity) {
   const canvas = document.getElementById('chart-request-trend');
   if (!canvas) return;
   if (typeof Chart === 'undefined') return;
-  if (chartInstances.requestTrend) chartInstances.requestTrend.destroy();
+  if (chartInstances.requestTrend) { chartInstances.requestTrend.destroy(); chartInstances.requestTrend = null; }
   if (!daily || daily.length === 0) {
-    canvas.parentElement.innerHTML = '<div class="td-empty">暂无数据</div>'; return;
+    toggleChartEmpty(canvas, true); return;
   }
+  toggleChartEmpty(canvas, false);
 
   const maxTicks = daily.length <= 12 ? daily.length : Math.min(Math.ceil(daily.length / 2), 24);
   chartInstances.requestTrend = new Chart(canvas, {
@@ -264,10 +287,11 @@ function renderModelDonut(models) {
   const canvas = document.getElementById('chart-model-donut');
   if (!canvas) return;
   if (typeof Chart === 'undefined') return;
-  if (chartInstances.modelDonut) chartInstances.modelDonut.destroy();
+  if (chartInstances.modelDonut) { chartInstances.modelDonut.destroy(); chartInstances.modelDonut = null; }
   if (!models || models.length === 0) {
-    canvas.parentElement.innerHTML = '<div class="td-empty">暂无数据</div>'; return;
+    toggleChartEmpty(canvas, true); return;
   }
+  toggleChartEmpty(canvas, false);
 
   const c = chartColors();
   const colors = models.map((_, i) => DOPAMINE[i % DOPAMINE.length]);

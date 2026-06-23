@@ -304,3 +304,12 @@
   - `.td-spinner` 边框顶部色 #FF6B6B → var(--accent)
   - `.ts-card:hover` 上浮动效 -1px → -2px 增强动感
 - **影响范围:** 仅 CSS 改动，无 JS/HTML/后端变更。主题色切换后，时间范围按钮、分页激活态、hover 高亮、加载动画全部跟随系统 accent 色
+
+## 2026-06-23 15:30: 修复流量图表 canvas 销毁 + 会话列表分页
+- **文件:**
+  - `frontend/traffic.js` — 修复 canvas 被 `innerHTML` 销毁导致永久"暂无数据"
+  - `frontend/style.css` — 新增 `.td-empty-state` / `.s-load-more` 样式
+  - `frontend/app.js` — 会话列表分页（每页 50 条）+ "加载更多"按钮 + 滚动保持
+- **根因:** 流量图表在 API 返回空数据时用 `canvas.parentElement.innerHTML = '暂无数据'` 覆盖父元素，导致 canvas DOM 节点被销毁，后续轮询再也找不到 canvas 节点，图表永久不显示
+- **决策:** 改为 `toggleChartEmpty()` 辅助函数，通过叠加 `.td-empty-state` 遮罩而非销毁 canvas；canvas 隐藏但保留在 DOM 中，数据恢复时取消隐藏即可正常渲染
+- **影响范围:** 流量仪表盘 3 个图表函数（renderTokenTrend/renderRequestTrend/renderModelDonut）和会话列表

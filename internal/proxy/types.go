@@ -10,6 +10,7 @@ import (
 	"github.com/ethan-blue/open-code-go-tools/internal/config"
 	"github.com/ethan-blue/open-code-go-tools/internal/hub"
 	"github.com/ethan-blue/open-code-go-tools/internal/quota"
+	"github.com/ethan-blue/open-code-go-tools/internal/session"
 )
 
 const maxReasoningEntries = 1024
@@ -84,6 +85,12 @@ type Server struct {
 
 	// 跨设备同步计数器，由外部设置
 	HubCounters *hub.SyncCounters
+
+	// Sessions cache: ReadAllSessions 结果缓存，避免每次导航都重扫所有 JSONL
+	sessionsCacheMu  sync.RWMutex
+	sessionsCache    []session.SessionStats
+	sessionsCacheAt  time.Time
+	sessionsCacheTTL time.Duration
 }
 
 func (s *Server) SetConfigPath(path string) {
@@ -255,6 +262,7 @@ func New(cfg config.Config, webAssets ...*embed.FS) (*Server, error) {
 		consecutiveFailures: map[string]int{},
 		trippedUntil:        map[string]time.Time{},
 		webAssets:           assets,
+		sessionsCacheTTL:    30 * time.Second,
 	}, nil
 }
 

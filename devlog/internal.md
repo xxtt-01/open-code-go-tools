@@ -343,3 +343,11 @@
 - **文件:** `main.go`
 - **原因:** Addr() 在 Start() 之前调用，返回 nil listener
 - **影响范围:** 独立 Hub 模式启动日志
+
+## 2026-06-23 15:30: 会话 API 添加后端缓存
+- **文件:**
+  - `internal/proxy/types.go` — Server 结构体新增 sessionsCache 字段（缓存切片 + TTL + 互斥锁）
+  - `internal/proxy/handler.go` — apiSessions 优先读缓存，30 秒 TTL 后自动刷新
+- **根因:** 会话 tab 每次导航和"查看更多"都调用 ReadAllSessions() 全量扫描 ~/.claude/projects/ 下所有 JSONL 文件，数百个文件时 I/O 开销极大
+- **决策:** 进程内内存缓存，30 秒 TTL。快速开关 tab 不触发重扫；Hub 同步等写入路径可显式清缓存
+- **影响范围:** 会话 tab 首次加载不变，重复切换和"加载更多"的体验大幅提升

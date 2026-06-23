@@ -2565,6 +2565,7 @@ html[data-theme="dark"] .td-chart-body canvas { filter:invert(0); }
 .td-spinner { display:inline-block; width:16px; height:16px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:td-spin .8s linear infinite; }
 @keyframes td-spin { to { transform:rotate(360deg); } }
 .td-empty { text-align:center; color:var(--text-3); padding:40px 0; font-size:13px; }
+.td-empty-state { text-align:center; color:var(--text-3); padding:40px 0; font-size:13px; }
 
 /* Detail filter controls */
 .td-detail-controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
@@ -3065,6 +3066,19 @@ html[data-theme="dark"] .td-chart-body canvas { filter:invert(0); }
     height: 40px;
     opacity: 0.25;
     margin-bottom: 10px;
+}
+.s-load-more {
+    text-align: center;
+    padding: 12px;
+    font-size: 12px;
+    color: var(--accent);
+    cursor: pointer;
+    border-top: 1px solid var(--border);
+    user-select: none;
+    transition: background 0.15s;
+}
+.s-load-more:hover {
+    background: var(--accent-soft);
 }
 
 /* ═══════════════════════════════════════

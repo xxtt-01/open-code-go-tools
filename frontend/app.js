@@ -3919,7 +3919,8 @@ function filterByPeriod(sessions, period) {
     });
 }
 
-/** 简化会话 ID —— 去掉常见前缀 */
+const SESSION_PAGE_SIZE = 50;
+let sessionsDisplayCount = SESSION_PAGE_SIZE;
 function shortSessionId(id) {
     if (!id) return '';
     // 去掉 rollout-YYYY-MM-DDTHH-MM-SS- 或类似前缀
@@ -3997,7 +3998,8 @@ function setupSessionsControls() {
     }
 }
 
-function applySessionsFilters() {
+function applySessionsFilters(resetPagination) {
+    if (resetPagination === undefined) resetPagination = true;
     const searchVal = (document.getElementById('sessions-search')?.value || '').toLowerCase();
     const modelFilter = document.getElementById('sessions-model-filter')?.value || '';
     const sortVal = document.getElementById('sessions-sort')?.value || 'time-desc';
@@ -4028,6 +4030,11 @@ function applySessionsFilters() {
             default: return (b.lastTime || '').localeCompare(a.lastTime || '');
         }
     });
+
+    // 仅在过滤条件变化时重置分页（"加载更多"时不重置）
+    if (resetPagination) {
+        sessionsDisplayCount = SESSION_PAGE_SIZE;
+    }
 
     renderSessionsList(filtered);
     renderSessionsStats(filtered);
@@ -4061,7 +4068,11 @@ function renderSessionsList(sessions) {
 
     const maxTokens = sessions.reduce((m, s) => Math.max(m, s.totalTokens || 0), 1);
 
-    listEl.innerHTML = sessions.map(s => {
+    // 只显示当前页的行
+    const visible = sessions.slice(0, sessionsDisplayCount);
+    const hasMore = visible.length < sessions.length;
+
+    listEl.innerHTML = visible.map(s => {
         const ratio = (s.totalTokens || 0) / maxTokens;
         const dotColor = ratio > 0.5 ? 'var(--red)' : ratio > 0.15 ? 'var(--yellow)' : 'var(--green)';
         const cost = sessionCost(s.model, s.inputTokens, s.outputTokens, s.cacheReadTokens, s.cacheCreateTokens);
@@ -4093,12 +4104,34 @@ function renderSessionsList(sessions) {
             '</div>';
     }).join('');
 
+    // 加载更多按钮
+    if (hasMore) {
+        const remaining = sessions.length - sessionsDisplayCount;
+        const loadMore = Math.min(SESSION_PAGE_SIZE, remaining);
+        listEl.innerHTML += '<div class="s-load-more" onclick="loadMoreSessions()">显示更多 ' + loadMore + ' 条（剩余 ' + remaining + '）</div>';
+    }
+
     // 点击行 → 详情
     listEl.querySelectorAll('.s-row').forEach(row => {
         row.addEventListener('click', () => {
             const sid = row.dataset.sessionId;
             if (sid) openSessionDetail(sid);
         });
+    });
+}
+
+/** 加载更多会话 */
+function loadMoreSessions() {
+    sessionsDisplayCount += SESSION_PAGE_SIZE;
+    const listEl = document.getElementById('sessions-list');
+    const prevScroll = listEl ? listEl.scrollTop : 0;
+    const prevHeight = listEl ? listEl.scrollHeight : 0;
+    applySessionsFilters(false);
+    // 恢复滚动位置（内容追加后保持视口不跳）
+    requestAnimationFrame(() => {
+        if (listEl) {
+            listEl.scrollTop = listEl.scrollHeight - prevHeight + prevScroll;
+        }
     });
 }
 

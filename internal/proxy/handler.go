@@ -1674,7 +1674,20 @@ func (s *Server) apiSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 原有逻辑：返回会话列表
+	// 原有逻辑：返回会话列表（带缓存）
+	s.sessionsCacheMu.RLock()
+	cached := s.sessionsCache
+	cachedAt := s.sessionsCacheAt
+	s.sessionsCacheMu.RUnlock()
+
+	if cached != nil && time.Since(cachedAt) < s.sessionsCacheTTL {
+		writeJSON(w, http.StatusOK, session.SessionsResponse{
+			Sessions: cached,
+			Total:    len(cached),
+		})
+		return
+	}
+
 	sessions, err := session.ReadAllSessions(projectsRoot)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -1683,6 +1696,12 @@ func (s *Server) apiSessions(w http.ResponseWriter, r *http.Request) {
 	if sessions == nil {
 		sessions = []session.SessionStats{}
 	}
+
+	s.sessionsCacheMu.Lock()
+	s.sessionsCache = sessions
+	s.sessionsCacheAt = time.Now()
+	s.sessionsCacheMu.Unlock()
+
 	writeJSON(w, http.StatusOK, session.SessionsResponse{
 		Sessions: sessions,
 		Total:    len(sessions),
