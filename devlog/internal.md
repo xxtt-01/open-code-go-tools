@@ -1,3 +1,9 @@
+## 2026-06-25: 发布 v2.2.3
+- **文件:** `internal/version/version.go`, `wails.json`
+- **版本:** 2.2.2 → 2.2.3
+- **变更:** 修复套餐额度接口因 opencode.ai RPC 函数 ID 过期失效
+- **影响范围:** 仅版本号更新
+
 ## 2026-06-25: 修复套餐额度接口因 opencode.ai 服务端函数哈希过期失效
 - **文件:** `internal/quota/quota.go`
 - **根因:** 同 ocgt-monitor 问题 — TanStack RPC 服务端函数 ID（`c7389bd0e...`）过期，`_server` 接口返回 302/500
