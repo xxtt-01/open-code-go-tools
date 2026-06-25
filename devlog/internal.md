@@ -16,7 +16,12 @@
 - **决策:** 将数据来源从 `_server?id=<哈希>` RPC 调用改为直接抓取 `/workspace/{id}/go` 页面，与 ocgt-monitor 已修复的方式一致
 - **影响范围:** 仅 `quota.go` 的 `FetchOpenCodeGoQuota`，调用方（`app.go`、`handler.go`）无感
 
-## 2026-06-25: 重写额度模块 — 自动解析 Workspace + 改进页面抓取
+## 2026-06-26: 发布 v2.2.5 — 重写额度模块
+- **文件:** `internal/quota/quota.go`, `internal/version/version.go`, `wails.json`
+- **版本:** 2.2.4 → 2.2.5
+- **根因:** `/workspace/{id}/go` 页面格式变化导致正则解析失败
+- **修复:** workspace ID 自动解析 + 请求头改进（Accept: text/html）
+- **影响范围:** 仅 `quota.go`，对外接口不变
 - **文件:** `internal/quota/quota.go`
 - **根因:** 上轮改用页面爬取后，`/workspace/{id}/go` 页面格式再次变化导致正则解析失败（用户反馈"解析失败"）
 - **决策:**
