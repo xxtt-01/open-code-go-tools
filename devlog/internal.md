@@ -1,3 +1,8 @@
+## 2026-07-13 13:00: v2.2.5 → v2.2.6 发布
+- **文件:** `internal/version/version.go`, `wails.json`, `frontend/app.js`, `build/bin/ocgt_v2.2.6.exe`
+- **版本:** 2.2.5 → 2.2.6
+- **变更:** 修复流量监控"全部"选项 + 日志永久保留 + 版本发布
+
 ## 2026-07-13 13:00: 修复日志保留天数 0 被 applyDefaults 重置为 14
 - **文件:** `internal/preferences/preferences.go`
 - **根因:** `applyDefaults()` 中 `LogRetentionDays == 0` 判断将"永久保留(0)"覆盖为默认值 14，与 `Validate()` 允许 0 的逻辑矛盾
