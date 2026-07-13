@@ -125,7 +125,7 @@ func (p *Preferences) applyDefaults() {
 			p.LogDirectory = dir
 		}
 	}
-	if p.LogRetentionDays == 0 {
+	if p.LogRetentionDays < 0 {
 		p.LogRetentionDays = DefaultLogRetentionDays
 	}
 	if strings.TrimSpace(p.Theme) == "" {

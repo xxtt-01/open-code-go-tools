@@ -1,3 +1,9 @@
+## 2026-07-13 13:00: 修复日志保留天数 0 被 applyDefaults 重置为 14
+- **文件:** `internal/preferences/preferences.go`
+- **根因:** `applyDefaults()` 中 `LogRetentionDays == 0` 判断将"永久保留(0)"覆盖为默认值 14，与 `Validate()` 允许 0 的逻辑矛盾
+- **修复:** 改为 `LogRetentionDays < 0`，只有负数才重置
+- **影响范围:** 设置 `log_retention_days: 0` 后日志不会自动删除
+
 ## 2026-07-13 13:00: 修复流量监控"全部"选项未显示全量数据
 - **文件:** `internal/proxy/stats.go`
 - **根因:** `parseIntParam` 的 `n > 365` 校验将最大查询范围限制在 365 天；同时前端"全部"发送 365 时虽能通过校验但只能查最近 365 天，超过的数据不显示。且手动字符解析不支持负号
