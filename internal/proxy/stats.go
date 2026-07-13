@@ -132,14 +132,16 @@ func parseIntParam(r *http.Request, name string, defaultVal int) int {
 	if val == "" {
 		return defaultVal
 	}
-	n := 0
-	for _, c := range val {
-		if c < '0' || c > '9' {
-			return defaultVal
-		}
-		n = n*10 + int(c-'0')
+	// 允许负值（如 -1 表示"全部"）
+	n, err := strconv.Atoi(val)
+	if err != nil {
+		return defaultVal
 	}
-	if n <= 0 || n > 365 {
+	// 特殊值 days<0 表示"全部"（不限制时间范围）
+	if n < 0 {
+		return n
+	}
+	if n <= 0 {
 		return defaultVal
 	}
 	return n
@@ -156,9 +158,13 @@ func (s *Server) readJSONLLogs(days int) []requestLogEntry {
 	}
 
 	// 以当日 00:00:00 为基准，向前推 (days-1) 天，确保 "今日"(days=1) 只覆盖当天
+	// days<0 表示"全部"，不限制时间范围
 	now := time.Now()
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	cutoff := startOfToday.AddDate(0, 0, -(days - 1))
+	var cutoff time.Time
+	if days >= 0 {
+		cutoff = startOfToday.AddDate(0, 0, -(days - 1))
+	}
 	var allEntries []requestLogEntry
 
 	files, err := os.ReadDir(dir)
@@ -191,11 +197,15 @@ log.Printf("[stats] readJSONLLogs: reading %q, found %d files, cutoff %s", dir, 
 		copy(hist, s.history)
 		s.historyMu.RUnlock()
 		if len(hist) > 0 {
-			cutoff := startOfToday.AddDate(0, 0, -(days - 1))
-			for _, e := range hist {
-				if e.Time.After(cutoff) {
-					allEntries = append(allEntries, e)
+			if days >= 0 {
+				cutoff := startOfToday.AddDate(0, 0, -(days - 1))
+				for _, e := range hist {
+					if e.Time.After(cutoff) {
+						allEntries = append(allEntries, e)
+					}
 				}
+			} else {
+				allEntries = append(allEntries, hist...)
 			}
 			log.Printf("[stats] JSONL empty, falling back to in-memory history: %d entries after filter", len(allEntries))
 		}
@@ -233,9 +243,13 @@ func readJSONLFile(path string, cutoff time.Time) []requestLogEntry {
 func emptyStats(days int) StatsSummary {
 	now := time.Now()
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	from := startOfToday.AddDate(0, 0, -(days - 1))
+	if days < 0 {
+		from = startOfToday.AddDate(0, 0, -365) // "全部"无数据时默认显示近一年
+	}
 	return StatsSummary{
 		Period: PeriodInfo{
-			From: startOfToday.AddDate(0, 0, -(days - 1)).Format("2006-01-02"),
+			From: from.Format("2006-01-02"),
 			To:   now.Format("2006-01-02"),
 			Days: days,
 		},
@@ -245,9 +259,13 @@ func emptyStats(days int) StatsSummary {
 func aggregateStats(entries []requestLogEntry, days int) StatsSummary {
 	now := time.Now()
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	from := startOfToday.AddDate(0, 0, -(days - 1))
+	if days < 0 {
+		from = time.Time{} // "全部"：用最小可能值，后续由最早的 entry 覆盖
+	}
 	result := StatsSummary{
 		Period: PeriodInfo{
-			From: startOfToday.AddDate(0, 0, -(days - 1)).Format("2006-01-02"),
+			From: from.Format("2006-01-02"),
 			To:   now.Format("2006-01-02"),
 			Days: days,
 		},
@@ -360,11 +378,24 @@ func aggregateStats(entries []requestLogEntry, days int) StatsSummary {
 	// Plan usage based on total estimated cost
 	result.PlanUsage = pricing.EstimateSpendingUsage(result.Summary.EstimatedCost)
 
+	// "全部"模式：用实际最早数据日期更新 PeriodInfo.From
+	if days < 0 && len(entries) > 0 {
+		earliest := entries[0].Time
+		for _, e := range entries {
+			if e.Time.Before(earliest) {
+				earliest = e.Time
+			}
+		}
+		result.Period.From = earliest.Format("2006-01-02")
+	}
+
 	return result
 }
 
 func determineGranularity(days int) string {
 	switch {
+	case days < 0:
+		return "week" // "全部" → 按周聚合
 	case days <= 2:
 		return "hour"
 	case days <= 90:

@@ -90,7 +90,7 @@ function initTimeRange() {
     { label: '今日', value: 1 },
     { label: '7日', value: 7 },
     { label: '30日', value: 30 },
-    { label: '全部', value: 365 }
+    { label: '全部', value: -1 }
   ];
   container.innerHTML = days.map(d =>
     `<span class="tr-btn ${d.value === currentDays ? 'active' : ''}" data-days="${d.value}">${d.label}</span>`
@@ -447,7 +447,7 @@ function initDetailTimeRange() {
     { label: '今日', value: 1 },
     { label: '7日', value: 7 },
     { label: '30日', value: 30 },
-    { label: '全部', value: 365 }
+    { label: '全部', value: -1 }
   ];
   container.innerHTML = days.map(d =>
     `<span class="tr-btn ${d.value === _detailState.days ? 'active' : ''}" data-days="${d.value}">${d.label}</span>`

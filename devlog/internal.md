@@ -1,3 +1,13 @@
+## 2026-07-13 13:00: 修复流量监控"全部"选项未显示全量数据
+- **文件:** `internal/proxy/stats.go`
+- **根因:** `parseIntParam` 的 `n > 365` 校验将最大查询范围限制在 365 天；同时前端"全部"发送 365 时虽能通过校验但只能查最近 365 天，超过的数据不显示。且手动字符解析不支持负号
+- **决策:** 
+  - `parseIntParam` 改用 `strconv.Atoi` 替代手动字符解析，支持负值；`n < 0` 直接返回表示"不限制"
+  - `readJSONLLogs` 在 `days < 0` 时不设置 cutoff（不限制时间范围）；fallback 到内存历史也按同样逻辑
+  - `determineGranularity` 处理 `days < 0` 返回 "week"
+  - `aggregateStats`/`emptyStats` 处理 `days < 0` 时的 PeriodInfo，`aggregateStats` 用实际最早 entry 日期更新 From
+- **影响范围:** "全部"现在真正返回所有数据（不限时）；1/7/30 日时间范围行为不变
+
 ## 2026-06-25: 发布 v2.2.4 — 修复正则解析 JSON 格式失败
 - **文件:** `internal/quota/quota.go`, `internal/version/version.go`, `wails.json`
 - **版本:** 2.2.3 → 2.2.4
