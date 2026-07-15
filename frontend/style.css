@@ -2428,6 +2428,25 @@ input::placeholder { color: var(--text-2); font-weight: 400; }
 .tr-btn:hover { opacity:0.8; }
 .tr-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
 
+/* 自定义日期选择器 */
+.tr-custom-row {
+  display:flex; align-items:center; gap:8px; margin-top:8px; padding:2px 0;
+}
+.tr-date-input {
+  padding:4px 8px; border:1px solid var(--border-2, #d0d7de); border-radius:6px;
+  background:var(--bg-1, #fff); color:var(--text-1, #1a1d28);
+  font-size:12px; font-family:inherit; outline:none;
+}
+.tr-date-input:focus {
+  border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-glow, rgba(255,107,107,0.2));
+}
+.tr-date-sep { color:var(--text-3); font-size:14px; }
+.tr-btn-apply {
+  padding:4px 14px; background:var(--accent); color:#fff; border:none;
+  border-radius:6px; font-size:12px; cursor:pointer; font-weight:600;
+}
+.tr-btn-apply:hover { opacity:0.85; }
+
 /* Stats row */
 .td-stats-row { display:flex; gap:10px; flex-wrap:wrap; }
 .ts-card {

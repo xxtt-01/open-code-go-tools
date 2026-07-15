@@ -39,9 +39,44 @@ function applyChartTheme() {
 applyChartTheme();
 
 // ── 状态 ──
-let currentDays = 1;
+let currentPresetId = 'today';
+let currentParams = { days: 1 };
 let chartInstances = {};
 let pollTimer = null;
+
+// ── 时间预设 ──
+const TIME_PRESETS = [
+  { id: 'today',     label: '今日',   build: () => ({ days: 1 }) },
+  { id: 'yesterday', label: '昨日',   build: () => {
+    const d = new Date(); d.setDate(d.getDate() - 1);
+    return { from: fmtYMD(d), to: fmtYMD(d) };
+  }},
+  { id: 'week7',     label: '近7日',  build: () => ({ days: 7 }) },
+  { id: 'month',     label: '本月',   build: () => {
+    const now = new Date();
+    const first = new Date(now.getFullYear(), now.getMonth(), 1);
+    return { from: fmtYMD(first), to: '' };
+  }},
+  { id: 'days30',    label: '近30日', build: () => ({ days: 30 }) },
+  { id: 'days90',    label: '近90日', build: () => ({ days: 90 }) },
+  { id: 'all',       label: '全部',   build: () => ({ days: -1 }) },
+];
+
+// 日期格式化为 YYYY-MM-DD（用于 API 参数）
+function fmtYMD(d) {
+  return d.getFullYear() + '-' +
+    (d.getMonth() + 1).toString().padStart(2, '0') + '-' +
+    d.getDate().toString().padStart(2, '0');
+}
+
+// 将参数对象转为 URL 查询字符串
+function buildQuery(params) {
+  const q = new URLSearchParams();
+  if (params.days !== undefined) q.set('days', params.days);
+  if (params.from) q.set('from', params.from);
+  if (params.to) q.set('to', params.to);
+  return q.toString();
+}
 
 // ── API ──
 let TRAFFIC_API_BASE = 'http://127.0.0.1:8787';
@@ -86,23 +121,37 @@ function safeShowLoading(show) {
 function initTimeRange() {
   const container = document.getElementById('time-range-selector');
   if (!container) return;
-  const days = [
-    { label: '今日', value: 1 },
-    { label: '7日', value: 7 },
-    { label: '30日', value: 30 },
-    { label: '全部', value: -1 }
-  ];
-  container.innerHTML = days.map(d =>
-    `<span class="tr-btn ${d.value === currentDays ? 'active' : ''}" data-days="${d.value}">${d.label}</span>`
+  container.innerHTML = TIME_PRESETS.map(p =>
+    `<span class="tr-btn ${p.id === currentPresetId ? 'active' : ''}" data-id="${p.id}">${p.label}</span>`
   ).join('');
   container.addEventListener('click', e => {
     const btn = e.target.closest('.tr-btn');
     if (!btn) return;
     container.querySelectorAll('.tr-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    currentDays = parseInt(btn.dataset.days, 10);
-    refreshAll();
+    currentPresetId = btn.dataset.id;
+    const preset = TIME_PRESETS.find(p => p.id === currentPresetId);
+    if (preset) {
+      currentParams = preset.build();
+      refreshAll();
+    }
   });
+
+  // 自定义日期
+  const fromInput = document.getElementById('custom-date-from');
+  const toInput = document.getElementById('custom-date-to');
+  const applyBtn = document.getElementById('custom-date-apply');
+  if (applyBtn && fromInput) {
+    applyBtn.addEventListener('click', () => {
+      const from = fromInput.value;
+      const to = toInput.value;
+      if (!from) return;
+      container.querySelectorAll('.tr-btn').forEach(b => b.classList.remove('active'));
+      currentPresetId = '';
+      currentParams = { from, to: to || '' };
+      refreshAll();
+    });
+  }
 }
 
 // ── 格式化 ──
@@ -375,10 +424,11 @@ async function refreshAll() {
   }
   safeShowLoading(true);
   const base = getBaseURL();
+  const query = buildQuery(currentParams);
   const [summary, trendData, modelData] = await Promise.all([
-    apiGet(`${base}/ocgt/api/stats/summary?days=${currentDays}`),
-    apiGet(`${base}/ocgt/api/stats/trend?days=${currentDays}`),
-    apiGet(`${base}/ocgt/api/stats/models?days=${currentDays}`)
+    apiGet(`${base}/ocgt/api/stats/summary?${query}`),
+    apiGet(`${base}/ocgt/api/stats/trend?${query}`),
+    apiGet(`${base}/ocgt/api/stats/models?${query}`)
   ]);
   try {
     if (summary && !summary._error) {
@@ -422,7 +472,8 @@ else initTrafficDashboard();
 
 let _detailInit = false;
 const _detailState = {
-  days: 7,
+  presetId: 'week7',
+  params: { days: 7 },
   page: 1,
   pageSize: 20,
   filterModel: '',
@@ -443,24 +494,39 @@ function initTrafficDetail() {
 function initDetailTimeRange() {
   const container = document.getElementById('detail-time-range');
   if (!container) return;
-  const days = [
-    { label: '今日', value: 1 },
-    { label: '7日', value: 7 },
-    { label: '30日', value: 30 },
-    { label: '全部', value: -1 }
-  ];
-  container.innerHTML = days.map(d =>
-    `<span class="tr-btn ${d.value === _detailState.days ? 'active' : ''}" data-days="${d.value}">${d.label}</span>`
+  container.innerHTML = TIME_PRESETS.map(p =>
+    `<span class="tr-btn ${p.id === _detailState.presetId ? 'active' : ''}" data-id="${p.id}">${p.label}</span>`
   ).join('');
   container.addEventListener('click', e => {
     const btn = e.target.closest('.tr-btn');
     if (!btn) return;
     container.querySelectorAll('.tr-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    _detailState.days = parseInt(btn.dataset.days, 10);
-    _detailState.page = 1;
-    loadDetailData();
+    _detailState.presetId = btn.dataset.id;
+    const preset = TIME_PRESETS.find(p => p.id === _detailState.presetId);
+    if (preset) {
+      _detailState.params = preset.build();
+      _detailState.page = 1;
+      loadDetailData();
+    }
   });
+
+  // 自定义日期（明细）
+  const fromInput = document.getElementById('detail-custom-date-from');
+  const toInput = document.getElementById('detail-custom-date-to');
+  const applyBtn = document.getElementById('detail-custom-date-apply');
+  if (applyBtn && fromInput) {
+    applyBtn.addEventListener('click', () => {
+      const from = fromInput.value;
+      const to = toInput.value;
+      if (!from) return;
+      container.querySelectorAll('.tr-btn').forEach(b => b.classList.remove('active'));
+      _detailState.presetId = '';
+      _detailState.params = { from, to: to || '' };
+      _detailState.page = 1;
+      loadDetailData();
+    });
+  }
 }
 
 function bindDetailControls() {
@@ -496,7 +562,7 @@ async function loadDetailData() {
   tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-3);padding:24px;"><span class="td-spinner"></span> 加载中...</td></tr>';
 
   const base = getBaseURL();
-  const data = await apiGet(`${base}/ocgt/api/history?days=${_detailState.days}`);
+  const data = await apiGet(`${base}/ocgt/api/history?${buildQuery(_detailState.params)}`);
 
   if (data && data._error) {
     tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--red);padding:24px;">加载失败: ${data._error}</td></tr>`;

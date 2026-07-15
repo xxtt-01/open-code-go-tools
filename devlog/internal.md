@@ -1,3 +1,15 @@
+## 2026-07-15 13:00: 统一 TimeRange 时间筛选体系
+- **文件:** `internal/proxy/stats.go`, `internal/proxy/handler.go`, `internal/proxy/proxy_test.go`
+- **变更:**
+  - 新增 `TimeRange {From, To}` 结构体替代 `days int`
+  - `parseTimeRange` 支持 `from`/`to` 参数（优先级高于 `days`）
+  - `readJSONLLogs` 改用 TimeRange 过滤，消除重复的 cutoff 计算
+  - `determineGranularity` 基于实际时间跨度计算粒度
+  - `dailyTrend` 移除未使用的 `days` 参数
+  - 向后兼容：`days=N` 参数仍可用
+- **测试:** 新增 9 个测试覆盖 parseTimeRange/determineGranularity 全部分支
+- **影响范围:** 所有 stats API 和 history API
+
 ## 2026-07-13 13:00: v2.2.5 → v2.2.6 发布
 - **文件:** `internal/version/version.go`, `wails.json`, `frontend/app.js`, `build/bin/ocgt_v2.2.6.exe`
 - **版本:** 2.2.5 → 2.2.6

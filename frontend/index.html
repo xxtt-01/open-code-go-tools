@@ -721,6 +721,13 @@
                       <span class="td-title">📊 流量监控仪表盘</span>
                       <span class="td-ts" id="td-timestamp"></span>
                     </div>
+                    <!-- 自定义日期查询 -->
+                    <div class="tr-custom-row" id="custom-date-row">
+                      <input type="date" class="tr-date-input" id="custom-date-from">
+                      <span class="tr-date-sep">—</span>
+                      <input type="date" class="tr-date-input" id="custom-date-to">
+                      <button class="tr-btn-apply" id="custom-date-apply">查询</button>
+                    </div>
                     <div class="td-loading" style="display:flex;align-items:center;justify-content:center;padding:60px 0;color:var(--text-3);font-size:14px;gap:8px;"><span class="td-spinner"></span> 加载中...</div>
                     <div class="td-loaded" style="display:none;">
                       <div class="td-stats-row" id="traffic-stats-row"></div>
@@ -776,6 +783,13 @@
                         <button class="td-btn td-btn-sm" id="btn-refresh-detail">⟳ 刷新</button>
                         <button class="td-btn td-btn-sm" id="btn-export-csv">⬇ 导出</button>
                         <button class="td-btn td-btn-sm td-btn-danger" id="btn-clear-history">🗑 清除</button>
+                      </div>
+                      <!-- 自定义日期查询（明细） -->
+                      <div class="tr-custom-row" id="detail-custom-date-row">
+                        <input type="date" class="tr-date-input" id="detail-custom-date-from">
+                        <span class="tr-date-sep">—</span>
+                        <input type="date" class="tr-date-input" id="detail-custom-date-to">
+                        <button class="tr-btn-apply" id="detail-custom-date-apply">查询</button>
                       </div>
                     </div>
                     <div class="td-table-wrap">
