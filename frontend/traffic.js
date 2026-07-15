@@ -133,6 +133,11 @@ function initTimeRange() {
     const preset = TIME_PRESETS.find(p => p.id === currentPresetId);
     if (preset) {
       currentParams = preset.build();
+      // 清空自定义日期输入框
+      const cf = document.getElementById('custom-date-from');
+      const ct = document.getElementById('custom-date-to');
+      if (cf) cf.value = '';
+      if (ct) ct.value = '';
       refreshAll();
     }
   });
@@ -141,11 +146,11 @@ function initTimeRange() {
   const fromInput = document.getElementById('custom-date-from');
   const toInput = document.getElementById('custom-date-to');
   const applyBtn = document.getElementById('custom-date-apply');
-  if (applyBtn && fromInput) {
+  if (applyBtn && fromInput && toInput) {
     applyBtn.addEventListener('click', () => {
       const from = fromInput.value;
       const to = toInput.value;
-      if (!from) return;
+      if (!from) { alert('请选择起始日期'); return; }
       container.querySelectorAll('.tr-btn').forEach(b => b.classList.remove('active'));
       currentPresetId = '';
       currentParams = { from, to: to || '' };
@@ -506,6 +511,11 @@ function initDetailTimeRange() {
     const preset = TIME_PRESETS.find(p => p.id === _detailState.presetId);
     if (preset) {
       _detailState.params = preset.build();
+      // 清空自定义日期输入框
+      const cf = document.getElementById('detail-custom-date-from');
+      const ct = document.getElementById('detail-custom-date-to');
+      if (cf) cf.value = '';
+      if (ct) ct.value = '';
       _detailState.page = 1;
       loadDetailData();
     }
@@ -515,11 +525,11 @@ function initDetailTimeRange() {
   const fromInput = document.getElementById('detail-custom-date-from');
   const toInput = document.getElementById('detail-custom-date-to');
   const applyBtn = document.getElementById('detail-custom-date-apply');
-  if (applyBtn && fromInput) {
+  if (applyBtn && fromInput && toInput) {
     applyBtn.addEventListener('click', () => {
       const from = fromInput.value;
       const to = toInput.value;
-      if (!from) return;
+      if (!from) { alert('请选择起始日期'); return; }
       container.querySelectorAll('.tr-btn').forEach(b => b.classList.remove('active'));
       _detailState.presetId = '';
       _detailState.params = { from, to: to || '' };
