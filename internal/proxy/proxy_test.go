@@ -2008,3 +2008,110 @@ func TestCircuitBreaker_Reset(t *testing.T) {
 		t.Fatal("should not be tripped after success")
 	}
 }
+
+// ── TimeRange / parseTimeRange / determineGranularity 测试 ──
+
+func TestParseTimeRange_FromTo(t *testing.T) {
+	req := httptest.NewRequest("GET", "/api/stats?from=2026-07-01&to=2026-07-15", nil)
+	s := &Server{}
+	tr := s.parseTimeRange(req, 7)
+	if tr.From.IsZero() {
+		t.Fatal("expected non-zero From")
+	}
+	if tr.To.IsZero() {
+		t.Fatal("expected non-zero To")
+	}
+	if tr.From.Format("2006-01-02") != "2026-07-01" {
+		t.Errorf("expected From=2026-07-01, got %s", tr.From.Format("2006-01-02"))
+	}
+	if tr.To.Format("2006-01-02") != "2026-07-15" {
+		t.Errorf("expected To=2026-07-15, got %s", tr.To.Format("2006-01-02"))
+	}
+	if tr.To.Hour() != 23 || tr.To.Minute() != 59 || tr.To.Second() != 59 {
+		t.Errorf("expected To=23:59:59, got %02d:%02d:%02d", tr.To.Hour(), tr.To.Minute(), tr.To.Second())
+	}
+}
+
+func TestParseTimeRange_FromOnly(t *testing.T) {
+	req := httptest.NewRequest("GET", "/api/stats?from=2026-07-01", nil)
+	s := &Server{}
+	tr := s.parseTimeRange(req, 7)
+	if tr.From.IsZero() {
+		t.Fatal("expected non-zero From")
+	}
+	if tr.To.IsZero() {
+		t.Fatal("expected non-zero To (default=now)")
+	}
+	if tr.From.Format("2006-01-02") != "2026-07-01" {
+		t.Errorf("expected From=2026-07-01, got %s", tr.From.Format("2006-01-02"))
+	}
+}
+
+func TestParseTimeRange_Days(t *testing.T) {
+	req := httptest.NewRequest("GET", "/api/stats?days=7", nil)
+	s := &Server{}
+	tr := s.parseTimeRange(req, 30)
+	if tr.From.IsZero() {
+		t.Fatal("expected non-zero From")
+	}
+	expectedFrom := time.Now().AddDate(0, 0, -6).Format("2006-01-02")
+	if tr.From.Format("2006-01-02") != expectedFrom {
+		t.Errorf("expected From=%s, got %s", expectedFrom, tr.From.Format("2006-01-02"))
+	}
+}
+
+func TestParseTimeRange_All(t *testing.T) {
+	req := httptest.NewRequest("GET", "/api/stats?days=-1", nil)
+	s := &Server{}
+	tr := s.parseTimeRange(req, 7)
+	if !tr.IsAll() {
+		t.Error("expected IsAll()=true for days=-1")
+	}
+}
+
+func TestParseTimeRange_NoParam(t *testing.T) {
+	req := httptest.NewRequest("GET", "/api/stats", nil)
+	s := &Server{}
+	tr := s.parseTimeRange(req, 14)
+	if tr.From.IsZero() {
+		t.Fatal("expected non-zero From")
+	}
+	expectedFrom := time.Now().AddDate(0, 0, -13).Format("2006-01-02")
+	if tr.From.Format("2006-01-02") != expectedFrom {
+		t.Errorf("expected From=%s, got %s", expectedFrom, tr.From.Format("2006-01-02"))
+	}
+}
+
+func TestDetermineGranularity_All(t *testing.T) {
+	g := determineGranularity(TimeRange{})
+	if g != "week" {
+		t.Errorf("expected week for all, got %s", g)
+	}
+}
+
+func TestDetermineGranularity_Hour(t *testing.T) {
+	now := time.Now()
+	tr := TimeRange{From: now.Add(-24 * time.Hour), To: now}
+	g := determineGranularity(tr)
+	if g != "hour" {
+		t.Errorf("expected hour for 24h span, got %s", g)
+	}
+}
+
+func TestDetermineGranularity_Day(t *testing.T) {
+	now := time.Now()
+	tr := TimeRange{From: now.AddDate(0, 0, -30), To: now}
+	g := determineGranularity(tr)
+	if g != "day" {
+		t.Errorf("expected day for 30d span, got %s", g)
+	}
+}
+
+func TestDetermineGranularity_Week(t *testing.T) {
+	now := time.Now()
+	tr := TimeRange{From: now.AddDate(0, 0, -90), To: now}
+	g := determineGranularity(tr)
+	if g != "week" {
+		t.Errorf("expected week for 90d span, got %s", g)
+	}
+}

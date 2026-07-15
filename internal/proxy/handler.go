@@ -1500,14 +1500,14 @@ func (s *Server) apiSetKey(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiHistory(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		days := parseIntParam(r, "days", 0)
+		tr := s.parseTimeRange(r, 0)
 		// 先读内存历史（当前会话）
 		s.historyMu.RLock()
 		memHist := s.history
 		s.historyMu.RUnlock()
 
 		// 再从 JSONL 文件读取（历史持久化）
-		fileEntries := s.readJSONLLogs(days)
+		fileEntries := s.readJSONLLogs(tr)
 
 		// 合并两份数据：文件条目（已按时间倒序）+ 内存中新增的（文件可能没来得及写入的）
 		seen := make(map[string]bool, len(fileEntries))
