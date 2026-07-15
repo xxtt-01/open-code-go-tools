@@ -1,3 +1,8 @@
+## 2026-07-15 13:00: v2.2.6 → v2.2.7 发布
+- **文件:** `internal/version/version.go`, `wails.json`, `frontend/app.js`, `build/bin/ocgt_v2.2.7.exe`
+- **版本:** 2.2.6 → 2.2.7
+- **变更:** TimeRange 统一时间筛选 + 前端 TIME_PRESETS + 自定义日期 + 修复 M1/M2/M3
+
 ## 2026-07-15 13:00: 统一 TimeRange 时间筛选体系
 - **文件:** `internal/proxy/stats.go`, `internal/proxy/handler.go`, `internal/proxy/proxy_test.go`
 - **变更:**
